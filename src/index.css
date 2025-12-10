@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+/* --- Table styling improvements --- */
+table {
+  border-collapse: separate;
+  border-spacing: 0 4px;
+}
+tr {
+  border-radius: 6px;
+}
