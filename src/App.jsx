@@ -14,7 +14,6 @@ import MaterialRequest from "./components/MaterialRequestForm";
 import Quotation from "./pages/Quotation";
 import Invoice from "./pages/Invoice";
 import Items from "./pages/Items";
-import CompanyInfo from "./pages/CompanyInfo";
 import CompanyList from "./pages/company/CompanyList";
 
 
@@ -139,7 +138,6 @@ export default function App() {
     <Route path="/quotation" element={<Quotation />} />
     <Route path="/invoice" element={<Invoice />} />
     <Route path="/items" element={<Items />} />
-    <Route path="/company-info" element={<CompanyInfo />} />  {/* ✅ Added */}
     <Route path="/company" element={<CompanyList />} />
   </Route>
 </Routes>

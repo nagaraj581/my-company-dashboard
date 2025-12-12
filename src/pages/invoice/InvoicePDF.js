@@ -31,7 +31,7 @@ export async function exportPdf(invoice) {
   /* ---------------- HEADER ---------------- */
   doc.setFont("helvetica", "bold");
   doc.setFontSize(28);
-  doc.text("INVOICE", left, 60);
+  doc.text(invoice.invoiceTitle || "INVOICE", left, 60);
 
   doc.setDrawColor(30, 80, 130);
   doc.setLineWidth(1);
@@ -166,36 +166,92 @@ export async function exportPdf(invoice) {
   doc.text("TOTAL:", labelX, ty);
   doc.text(`Rs. ${formatCurrency(total)}`, valueX, ty, { align: "right" });
 
-  /* ---------------- QR CODE ---------------- */
-  const qrX = left;
-  const qrY = ty + 20;
-  const qrSize = 90;
-
-  // Generate UPI QR
-  let upiBase64 = "";
-  const upiString = `upi://pay?pa=nagaraj581@ybl&pn=${encodeURIComponent(
-    customerName || "Customer"
-  )}&am=${total}&cu=INR`;
-
-  try {
-    upiBase64 = await QRCode.toDataURL(upiString);
-  } catch (err) {
-    console.error("QR generation failed:", err);
-  }
-
-  if (upiBase64) {
-    doc.addImage(upiBase64, "PNG", qrX, qrY, qrSize, qrSize);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("Scan & Pay (UPI)", qrX, qrY + qrSize + 15);
-  }
-
-  /* ---------------- AMOUNT IN WORDS ---------------- */
-  let wordsY = qrY + qrSize + 40;
-
+  // AMOUNT RECEIVED (optional)
+if (invoice.amountReceived > 0) {
+  ty += 20;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.text(`Amount in words: Rupees ${amountToWords(total)}`, left, wordsY);
+  doc.setFontSize(12);
+
+  doc.text("Amount Received:", labelX, ty);
+  doc.text(
+    `Rs. ${formatCurrency(invoice.amountReceived)}`,
+    valueX,
+    ty,
+    { align: "right" }
+  );
+
+  // balance
+  const balance = total - invoice.amountReceived;
+  ty += 18;
+
+  doc.setFont("helvetica", "bold");
+  doc.text("Balance Due:", labelX, ty);
+  doc.text(
+    `Rs. ${formatCurrency(balance)}`,
+    valueX,
+    ty,
+    { align: "right" }
+  );
+}
+
+
+
+/* ---------------- AMOUNT IN WORDS BASE START POSITION ---------------- */
+let wordsY = ty + 40;
+
+/* ---------------- QR CODE ---------------- */
+if (invoice.showQr) {
+    const qrX = left;
+    const qrY = ty + 20;
+    const qrSize = 90;
+
+    let upiBase64 = "";
+
+    const effectiveUpi =
+      invoice.companyUpi ??
+      invoice.companyInfo?.activeUpi ??
+      null;
+
+    if (effectiveUpi?.qrBase64) {
+      upiBase64 = effectiveUpi.qrBase64;
+    } else if (effectiveUpi?.upiId) {
+      const upiString = `upi://pay?pa=${effectiveUpi.upiId}&pn=${encodeURIComponent(
+        effectiveUpi?.name || invoice.companyInfo?.name || "Merchant"
+      )}&am=${total}&cu=INR`;
+
+      try {
+        upiBase64 = await QRCode.toDataURL(upiString);
+      } catch (err) {
+        console.error("QR generation failed:", err);
+      }
+    }
+
+    if (upiBase64) {
+      doc.addImage(upiBase64, "PNG", qrX, qrY, qrSize, qrSize);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text("Scan & Pay (UPI)", qrX, qrY + qrSize + 15);
+    }
+
+    // ✅ now legal because wordsY is defined ABOVE this block
+    wordsY = qrY + qrSize + 40;
+}
+
+/* ---------------- AMOUNT IN WORDS ---------------- */
+const amountReceived = Number(invoice.amountReceived || 0);
+const balanceDue = total - amountReceived;
+
+const amountForWords =
+  amountReceived > 0 ? balanceDue : total;
+
+doc.setFont("helvetica", "normal");
+doc.setFontSize(11);
+doc.text(
+  `Amount in words: Rupees ${amountToWords(amountForWords)}`,
+  left,
+  wordsY
+);
+
 
   /* ---------------- SIGNATURE ---------------- */
   const sigY = wordsY + 40;

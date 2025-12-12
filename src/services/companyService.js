@@ -10,6 +10,8 @@ import {
   orderBy,
   query,
 } from "firebase/firestore";
+import { getUpis } from "./companyUpiService";
+
 
 /**
  * Firestore helpers for companies + activeCompany setting
@@ -25,10 +27,24 @@ export async function getCompanies() {
 
 export async function getCompany(id) {
   if (!id) return null;
+
   const ref = doc(db, "companies", id);
   const snap = await getDoc(ref);
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+
+  if (!snap.exists()) return null;
+
+  const companyData = { id: snap.id, ...snap.data() };
+
+  // fetch UPI list
+  const upis = await getUpis(id);
+
+  return {
+    ...companyData,
+    upis,
+    defaultUpiId: companyData.defaultUpiId || null
+  };
 }
+
 
 export async function saveCompany(id, data) {
   // if id provided -> merge, else use auto-id by setDoc on generated doc

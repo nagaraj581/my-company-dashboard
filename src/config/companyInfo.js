@@ -5,11 +5,23 @@ let cache = null;
 export async function getCompanyInfo() {
   if (cache) return cache;
 
-  const activeId = await getActiveCompanyId();
-  if (!activeId) return null;
+  const companyId = await getActiveCompanyId();
+  if (!companyId) return null;
 
-  const data = await getCompany(activeId);
-  cache = data;
+  const company = await getCompany(companyId);
+  if (!company) return null;
+
+  // Build a unified UPI object from fields inside company doc
+  const activeUpi = {
+    qrBase64: company.qrBase64 || null,
+    upiId: company.upiId || null,
+    name: company.upiName || company.name || "Merchant"
+  };
+
+  cache = {
+    ...company,
+    activeUpi,
+  };
 
   return cache;
 }

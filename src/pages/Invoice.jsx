@@ -1,3 +1,4 @@
+// src/pages/Invoice.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   collection,
@@ -6,15 +7,14 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
+  getDoc,
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import { getCompanyInfo } from "../config/companyInfo";
+
+import { clearCompanyInfoCache, getCompanyInfo } from "../config/companyInfo";
 import { useUnits } from "../hooks/useUnits";
-import { useSearchParams } from "react-router-dom";
-import { useLocation } from "react-router-dom";
-
-
+import { useSearchParams, useLocation } from "react-router-dom";
 
 import {
   formatCurrency,
@@ -32,11 +32,13 @@ export default function InvoicePage() {
 
   // company config loaded from Firestore
   const [companyInfo, setCompanyInfo] = useState({});
+  const [companyUpi, setCompanyUpi] = useState(null);
+
   const [params] = useSearchParams();
-const fromQuote = params.get("fromQuote");
-const location = useLocation();
+  const fromQuote = params.get("fromQuote");
 
-
+  const location = useLocation();
+  const [invoiceTitle, setInvoiceTitle] = useState("INVOICE");
 
   // item master (local saved items)
   const [savedItems, setSavedItems] = useState([]);
@@ -55,119 +57,141 @@ const location = useLocation();
   const [discountType, setDiscountType] = useState("amount");
   const [discountValue, setDiscountValue] = useState("");
   const [terms, setTerms] = useState("");
+  const [amountReceived, setAmountReceived] = useState("");
+
 
   // saved invoices
   const [savedInvoices, setSavedInvoices] = useState([]);
   const [loadedInvoiceId, setLoadedInvoiceId] = useState(null);
 
   const [saving, setSaving] = useState(false);
+  const [showQr, setShowQr] = useState(true);
 
-// -------- Load company info + saved items + invoices --------
-useEffect(() => {
-  (async () => {
-    const info = await getCompanyInfo();
-    setCompanyInfo(info || {});
 
-    const localTerms = localStorage.getItem("invoice_terms");
-    if (localTerms) setTerms(localTerms);
-    else if (info?.terms) setTerms(info.terms);
-  })();
+  // ------------------ load company + items + invoices ------------------
+  useEffect(() => {
+    let unsubItems = null;
+    let unsubInvoices = null;
 
-  // listen invoices
-  const unsubInvoices = onSnapshot(collection(db, "invoices"), (snap) => {
-    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    (async () => {
+      // Ensure cached company info is fresh each time the page opens
+      clearCompanyInfoCache();
+      const info = await getCompanyInfo();
+      setCompanyInfo(info || {});
+      setCompanyUpi(info?.activeUpi || null);
 
-    // newest first
-    setSavedInvoices(
-      list.sort((a, b) =>
-        (a.createdAt?.seconds || 0) < (b.createdAt?.seconds || 0) ? 1 : -1
-      )
-    );
-  });
+      // live items listener
+      unsubItems = onSnapshot(collection(db, "items"), (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setSavedItems(list);
+      });
 
-  return () => unsubInvoices();
-}, []);
+      // live invoices listener (newest first)
+      unsubInvoices = onSnapshot(collection(db, "invoices"), (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) =>
+          (a.createdAt?.seconds || 0) < (b.createdAt?.seconds || 0) ? 1 : -1
+        );
+        setSavedInvoices(list);
+      });
 
-// Load items live from Firestore
-useEffect(() => {
-  const unsub = onSnapshot(collection(db, "items"), (snap) => {
-    const list = snap.docs.map((d) => ({
-      id: d.id,
-      ...d.data()
-    }));
-    setSavedItems(list);
-  });
-  return () => unsub();
-}, []);
+      // load local terms fallback
+      const localTerms = localStorage.getItem("invoice_terms");
+      if (localTerms) setTerms(localTerms);
+      else if (info?.terms) setTerms(info.terms || "");
+    })();
 
-useEffect(() => {
-  if (fromQuote) {
-    // Load quotation from Firestore
-    const qRef = doc(db, "quotations", fromQuote);
-    getDoc(qRef).then((snap) => {
-      if (snap.exists()) {
-        const q = snap.data();
+    return () => {
+      if (unsubItems) unsubItems();
+      if (unsubInvoices) unsubInvoices();
+    };
+  }, []);
 
-        setCustomerName(q.customerName);
-        setCustomerAddress(q.customerAddress);
-        setItems(q.items);
-        setDiscountType(q.discountType);
-        setDiscountValue(q.discountValue);
+  // If active company or companyUpi changes the UI can react (debug optional)
+  useEffect(() => {
+    // you can enable these logs while debugging
+    // console.log("companyInfo", companyInfo);
+    // console.log("companyUpi", companyUpi);
+  }, [companyInfo, companyUpi]);
 
-        // Create new invoice number auto
-        generateInvoiceNumber();
+  // If navigated from a quotation id (query param) - load quotation (optional)
+  useEffect(() => {
+    if (!fromQuote) return;
+    (async () => {
+      try {
+        const qRef = doc(db, "quotations", fromQuote);
+        const snap = await getDoc(qRef);
+        if (snap.exists()) {
+          const q = snap.data();
+          setCustomerName(q.customerName || "");
+          setCustomerAddress(q.customerAddress || "");
+          // convert quote items to invoice rows
+          if (Array.isArray(q.items)) {
+            setRows(
+              q.items.map((it) => ({
+                item: it.name,
+                quantity: Number(it.quantity || 0),
+                unit: it.unit,
+                rate: Number(it.rate || 0),
+                amount: Number(it.amount || it.quantity * it.rate || 0),
+              }))
+            );
+          }
+          // auto invoice number handled when saving; optional generate function if you have one
+        }
+      } catch (e) {
+        console.error("Failed to load quote:", e);
       }
-    });
-  }
-}, []);
+    })();
+  }, [fromQuote]);
 
-useEffect(() => {
-  if (location.state?.quotation) {
+  // If navigation state passes a quotation object
+  useEffect(() => {
+    if (!location.state?.quotation) return;
     const q = location.state.quotation;
-
-    setCustomerName(q.customer);
+    setCustomerName(q.customer || "");
     setCustomerAddress("");
-
-    const formattedItems = q.items.map(item => ({
-      item: item.name,
-      quantity: Number(item.quantity),
-      unit: item.unit,
-      rate: Number(item.rate),
-      amount: Number(item.amount)
-    }));
-
-    setRows(formattedItems);
-  }
-}, [location.state]);
-
+    if (Array.isArray(q.items)) {
+      const formattedItems = q.items.map((item) => ({
+        item: item.name,
+        quantity: Number(item.quantity),
+        unit: item.unit,
+        rate: Number(item.rate),
+        amount: Number(item.amount),
+      }));
+      setRows(formattedItems);
+    }
+  }, [location.state]);
 
   // totals (memoized)
-  const totals = useMemo(
-    () => calcTotals(rows, discountType, discountValue),
-    [rows, discountType, discountValue]
-  );
+  const totals = useMemo(() => calcTotals(rows, discountType, discountValue), [
+    rows,
+    discountType,
+    discountValue,
+  ]);
+
   /* ---------------------- Handle Form Changes ---------------------- */
-function handleChange(e) {
-  const { name, value } = e.target;
+  function handleChange(e) {
+    const { name, value } = e.target;
 
-  if (name === "item") {
-    const found = savedItems.find(
-      (it) => it.name?.toLowerCase() === value.toLowerCase()
-    );
+    if (name === "item") {
+      const found = savedItems.find(
+        (it) => it.name?.toLowerCase() === value.toLowerCase()
+      );
 
-    if (found) {
-      setForm({
-        item: value,
-        unit: found.unit,
-        rate: found.rate,
-        quantity: form.quantity || ""
-      });
-      return;
+      if (found) {
+        setForm({
+          item: value,
+          unit: found.unit,
+          rate: found.rate,
+          quantity: form.quantity || "",
+        });
+        return;
+      }
     }
-  }
 
-  setForm((f) => ({ ...f, [name]: value }));
-}
+    setForm((f) => ({ ...f, [name]: value }));
+  }
 
   /* ---------------------- Add / Update Row ---------------------- */
   function addOrUpdateRow() {
@@ -189,13 +213,11 @@ function handleChange(e) {
     };
 
     if (editingIndex !== null) {
-      // update
       const copy = [...rows];
       copy[editingIndex] = newRow;
       setRows(copy);
       setEditingIndex(null);
     } else {
-      // add new
       setRows((old) => [...old, newRow]);
     }
 
@@ -229,24 +251,25 @@ function handleChange(e) {
     setSaving(true);
     try {
       const payload = {
-        customerName: customerName.trim(),
-        customerAddress: customerAddress.trim(),
-        invoiceDate: new Date(invoiceDate),
-        items: rows,
-        subtotal: totals.subtotal,
-        discountValue: Number(discountValue || 0),
-        discountType,
-        totalAmount: totals.total,
-        terms,
-      };
+  customerName,
+  customerAddress,
+  invoiceDate: new Date(invoiceDate),
+  items: rows,
+  subtotal: totals.subtotal,
+  discountValue: Number(discountValue || 0),
+  discountType,
+  totalAmount: totals.total,
+  terms,
+  invoiceTitle,
+  amountReceived: Number(amountReceived || 0),
+};
+
 
       if (loadedInvoiceId) {
-        // update existing invoice
         payload.updatedAt = Timestamp.now();
         await updateDoc(doc(db, "invoices", loadedInvoiceId), payload);
         alert("Invoice updated");
       } else {
-        // create new invoice
         const invNo = await getNextInvoiceNumber();
         payload.invoiceNumber = invNo;
         payload.createdAt = Timestamp.now();
@@ -271,6 +294,9 @@ function handleChange(e) {
     setLoadedInvoiceId(inv.id);
     setCustomerName(inv.customerName || "");
     setCustomerAddress(inv.customerAddress || "");
+    setInvoiceTitle(inv.invoiceTitle || "INVOICE");
+    setAmountReceived(inv.amountReceived || "");
+
 
     const d = parseInvoiceDate(inv.invoiceDate);
     setInvoiceDate(d.toISOString().slice(0, 10));
@@ -322,40 +348,22 @@ function handleChange(e) {
   }
 
   /* ---------------------- Print Preview ---------------------- */
-  function openPrintView(inv = null, autoPrint = false) {
-    const source = inv || {
-      invoiceNumber: loadedInvoiceId
-        ? savedInvoices.find((s) => s.id === loadedInvoiceId)?.invoiceNumber
-        : "Draft",
-      invoiceDate,
-      customerName,
-      customerAddress,
-      items: rows,
-      discountValue,
-      discountType,
-      terms,
-      companyInfo,
-      totalAmount: totals.total,
-    };
-
-    const html = renderInvoiceHtml(source);
-
-    const w = window.open("", "_blank", "width=900,height=900");
-    w.document.write(html);
-    w.document.close();
-    if (autoPrint) w.print();
-  }
-
-  /* ---------------------- PDF Export ---------------------- */
-function exportCurrentPdf() {
-  const inv = loadedInvoiceId
-    ? savedInvoices.find((s) => s.id === loadedInvoiceId)
-    : null;
-
+function openPrintView(inv = null, autoPrint = false) {
+  // Build unified invoice object (same structure PDF expects)
   const payload = inv
-    ? { ...inv, companyInfo } // <-- pass companyInfo along when using saved invoice
+    ? {
+        ...inv,
+        companyInfo,
+        companyUpi,
+        showQr,
+        amountReceived,
+        totalAmount: inv.totalAmount,
+        invoiceTitle: inv.invoiceTitle || invoiceTitle,
+      }
     : {
-        invoiceNumber: "Draft",
+        invoiceNumber: loadedInvoiceId
+          ? savedInvoices.find((s) => s.id === loadedInvoiceId)?.invoiceNumber
+          : "Draft",
         invoiceDate,
         customerName,
         customerAddress,
@@ -364,10 +372,63 @@ function exportCurrentPdf() {
         discountValue,
         terms,
         companyInfo,
+        companyUpi,
+        showQr,
+        amountReceived,
+        totalAmount: totals.total,
+        invoiceTitle,
       };
 
-  exportPdf(payload);
+  // Generate HTML using the structured payload
+  const html = renderInvoiceHtml(payload);
+
+  // Open new window & show preview
+  const w = window.open("", "_blank", "width=900,height=900");
+  w.document.write(html);
+  w.document.close();
+
+  if (autoPrint) w.print();
 }
+
+
+  /* ---------------------- PDF Export ---------------------- */
+  function exportCurrentPdf() {
+    const inv = loadedInvoiceId
+      ? savedInvoices.find((s) => s.id === loadedInvoiceId)
+      : null;
+
+    const payload = inv
+  ? {
+      ...inv,
+      companyInfo,
+      showQr,
+      amountReceived: inv.amountReceived || 0,
+    }
+  : {
+      invoiceNumber: "Draft",
+      invoiceDate,
+      customerName,
+      customerAddress,
+      items: rows,
+      discountType,
+      discountValue,
+      terms,
+      companyInfo,
+      invoiceTitle,
+      showQr,
+      amountReceived: Number(amountReceived || 0),
+    };
+
+    // pass companyUpi explicitly so PDF generator can use it
+   exportPdf({
+  ...payload,
+  companyUpi: companyUpi || null,
+  showQr: showQr
+});
+
+
+  }
+
   /* ---------------------- Save terms locally (small helper) ---------------------- */
   function saveTermsLocally() {
     localStorage.setItem("invoice_terms", terms || "");
@@ -378,13 +439,25 @@ function exportCurrentPdf() {
   /* ---------------------- UI (return) ---------------------- */
   return (
     <div className="p-8 min-h-screen bg-gray-50">
+      {/* Document Title input */}
+      <div className="mb-3">
+        <input
+          className="p-3 border rounded w-full md:w-64 font-semibold text-lg"
+          placeholder="Document Title (e.g., Invoice, Cash Memo, Labour Bill)"
+          value={invoiceTitle}
+          onChange={(e) => setInvoiceTitle(e.target.value)}
+        />
+      </div>
+
       {/* Header / Company Info (C4 card) */}
       <div className="bg-white rounded-2xl p-6 mb-6 shadow border border-gray-200">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-2xl font-bold text-slate-800 mb-1">{companyInfo?.name}</h2>
             <div className="text-sm text-slate-600">{companyInfo?.address}</div>
-            <div className="text-sm text-slate-600">Phone: {companyInfo?.phone} {companyInfo?.email ? `| Email: ${companyInfo.email}` : ""}</div>
+            <div className="text-sm text-slate-600">
+              Phone: {companyInfo?.phone} {companyInfo?.email ? `| Email: ${companyInfo.email}` : ""}
+            </div>
           </div>
 
           <div className="text-right">
@@ -433,11 +506,11 @@ function exportCurrentPdf() {
           placeholder="Type or select item name"
           className="p-3 border rounded md:col-span-2"
         />
-<datalist id="itemList">
-  {savedItems.map((it, index) => (
-    <option key={index} value={it.name} />
-  ))}
-</datalist>
+        <datalist id="itemList">
+          {savedItems.map((it, index) => (
+            <option key={index} value={it.name} />
+          ))}
+        </datalist>
 
         <input
           name="quantity"
@@ -530,6 +603,18 @@ function exportCurrentPdf() {
           />
         </div>
 
+        <div className="mt-4">
+  <label className="flex items-center gap-2">
+    <input 
+      type="checkbox" 
+      checked={showQr}
+      onChange={(e) => setShowQr(e.target.checked)}
+    />
+    <span>Show QR Code on this invoice</span>
+  </label>
+</div>
+
+
         <div className="flex-1">
           <label className="block text-sm font-medium text-gray-700">Terms & Conditions (editable)</label>
           <textarea
@@ -550,6 +635,25 @@ function exportCurrentPdf() {
           <div className="flex justify-between"><span>Subtotal</span><span>₹ {formatCurrency(totals.subtotal)}</span></div>
           <div className="flex justify-between mt-2"><span>Discount</span><span>₹ {formatCurrency(totals.discount)}</span></div>
           <div className="border-t mt-3 pt-2 flex justify-between font-semibold text-lg"><span>Total</span><span>₹ {formatCurrency(totals.total)}</span></div>
+        <div className="flex justify-between mt-2">
+  <span>Amount Received</span>
+  <input
+    type="number"
+    min="0"
+    className="border p-1 w-32 text-right rounded"
+    placeholder="0.00"
+    value={amountReceived}
+    onChange={(e) => setAmountReceived(e.target.value)}
+  />
+</div>
+
+{amountReceived > 0 && (
+  <div className="flex justify-between mt-2 font-semibold text-red-700">
+    <span>Balance Due</span>
+    <span>₹ {(totals.total - Number(amountReceived)).toLocaleString("en-IN")}</span>
+  </div>
+)}
+
         </div>
       </div>
 
@@ -585,7 +689,20 @@ function exportCurrentPdf() {
               <div className="flex gap-2">
                 <button onClick={() => loadInvoice(inv)} className="bg-blue-500 text-white px-3 py-1 rounded">Open</button>
                 <button onClick={() => openPrintView(inv)} className="bg-gray-700 text-white px-3 py-1 rounded">Print</button>
-                 <button onClick={() => exportPdf({ ...inv, companyInfo })} className="bg-green-600 text-white px-3 py-1 rounded">PDF</button>
+<button
+  onClick={() =>
+    exportPdf({
+      ...inv,
+      companyInfo,
+      companyUpi,
+      showQr,
+      amountReceived: inv.amountReceived || 0,
+    })
+  }
+  className="bg-green-600 text-white px-3 py-1 rounded"
+>
+  PDF
+</button>
                 <button onClick={() => deleteInvoice(inv)} className="bg-red-500 text-white px-3 py-1 rounded">Delete</button>
               </div>
             </div>
