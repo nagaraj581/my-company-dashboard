@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase";
 import Navbar from "./Navbar";
 import BottomNav from "./BottomNav";
+import { getCompanyInfo, clearCompanyInfoCache } from "../config/companyInfo";
 
 export default function Layout({ user, onLogout }) {
   const [darkMode, setDarkMode] = useState(false);
@@ -15,7 +14,6 @@ export default function Layout({ user, onLogout }) {
   });
   const location = useLocation();
 
-  // ✅ Load dark mode preference
   useEffect(() => {
     try {
       const stored = localStorage.getItem("darkMode");
@@ -32,7 +30,6 @@ export default function Layout({ user, onLogout }) {
     }
   }, []);
 
-  // ✅ Apply dark mode theme
   useEffect(() => {
     try {
       const root = document.documentElement;
@@ -44,39 +41,29 @@ export default function Layout({ user, onLogout }) {
     }
   }, [darkMode]);
 
-  // ✅ Live company info from Firestore
   useEffect(() => {
-    const ref = doc(db, "company", "config");
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          setCompanyInfo({
-            name: String(data.name || "My Company LTD").replace(/"/g, ""),
-            address: String(
-              data.address || "123 Business Street, Udupi, Karnataka"
-            ).replace(/"/g, ""),
-            phone: String(data.phone || "+91 98765 43210").replace(/"/g, ""),
-            email: String(data.email || "info@mycompany.com").replace(/"/g, ""),
-          });
-        }
-      },
-      (err) => console.error("Error loading company info:", err)
-    );
-    return () => unsub();
+    const loadCompany = async () => {
+      clearCompanyInfoCache();
+      const info = await getCompanyInfo();
+      if (info) setCompanyInfo(info);
+    };
+
+    loadCompany();
+
+    const handler = () => loadCompany();
+    window.addEventListener("companyChanged", handler);
+
+    return () => window.removeEventListener("companyChanged", handler);
   }, []);
 
-  // ✅ Hide bottom nav for specific routes
   const hideBottomNav = ["/login", "/company-info"].includes(location.pathname);
 
   return (
     <div
       className={`min-h-screen flex flex-col ${
-        darkMode ? "bg-gray-900 text-gray-100" : "bg-blue-50 text-gray-900"
+        darkMode ? "bg-slate-950 text-slate-100" : "text-slate-900"
       }`}
     >
-      {/* Top Navbar */}
       <Navbar
         user={user}
         onLogout={onLogout}
@@ -84,29 +71,37 @@ export default function Layout({ user, onLogout }) {
         setDarkMode={setDarkMode}
       />
 
-      {/* ✅ Full-width content area */}
-<main className="flex-1 pt-16 pb-20 sm:pb-0 px-0">
-<div
-  className={`w-full ${
-    darkMode ? "bg-gray-800" : "bg-white"
-  } rounded-none sm:rounded-2xl shadow-lg p-4 sm:p-8`}
->
-  <Outlet context={{ darkMode, companyInfo }} />
-</div>
+      <main className="flex-1 pt-20 pb-24 sm:pb-8 px-3 sm:px-6 lg:px-8">
+        <div
+          className={`max-w-7xl mx-auto rounded-3xl backdrop-blur-xl transition-all duration-300 ${
+            darkMode
+              ? "bg-slate-900/75 border border-slate-700/60 shadow-2xl shadow-slate-900/50"
+              : "bg-white/78 border border-white/70 shadow-[0_30px_80px_-35px_rgba(15,23,42,0.35)]"
+          }`}
+        >
+          <div className="p-6 sm:p-8 md:p-10">
+            <Outlet context={{ darkMode, companyInfo }} />
+          </div>
+        </div>
       </main>
 
-      {/* Bottom Navigation (mobile) */}
       {!hideBottomNav && <BottomNav darkMode={darkMode} />}
 
-      {/* Footer */}
       <footer
-        className={`text-center py-6 mt-auto text-sm ${
+        className={`mt-auto py-6 px-4 text-center text-sm font-medium transition-colors ${
           darkMode
-            ? "bg-gray-800 text-gray-400"
-            : "bg-gray-100 text-gray-600 border-t border-gray-200"
+            ? "bg-slate-950/70 border-t border-slate-700/50 text-slate-400"
+            : "bg-white/45 border-t border-slate-200/60 text-slate-600 backdrop-blur-xl"
         }`}
       >
-        © {new Date().getFullYear()} {companyInfo.name} — All rights reserved.
+        <div className="max-w-7xl mx-auto">
+          <p className="mb-2">
+            � {new Date().getFullYear()} <span className="font-bold bg-gradient-to-r from-blue-500 to-indigo-600 bg-clip-text text-transparent">{companyInfo.name}</span> � All rights reserved.
+          </p>
+          <p className={`text-xs ${darkMode ? "text-slate-500" : "text-slate-400"}`}>
+            Crafted for modern business operations
+          </p>
+        </div>
       </footer>
     </div>
   );

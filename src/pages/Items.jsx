@@ -4,35 +4,50 @@ import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase
 import { db } from "../firebase";
 import { onSnapshot } from "firebase/firestore";
 import { getCompanyInfo } from "../config/companyInfo";
+import { SkeletonLoader } from "../components/SkeletonLoader";
 import {
   query,
   where,
 } from "firebase/firestore";
+import { useCurrency } from "../context/CurrencyContext";
 
+const DEFAULT_UNITS = ["Nos"];
 
 export default function Items() {
-  const defaultUnits = ["Nos"];
   const [items, setItems] = useState([]);
+  const [loadingItems, setLoadingItems] = useState(true);
   const [form, setForm] = useState({ name: "", unit: "", rate: "", category: "" });
-  const [units, setUnits] = useState(defaultUnits);
+  const [units, setUnits] = useState(DEFAULT_UNITS);
   const [newUnit, setNewUnit] = useState("");
-  const [companyInfo, setCompanyInfo] = useState(null);
+  const [_companyInfo, setCompanyInfo] = useState(null);
+  const { currency } = useCurrency();
+  const [categories, setCategories] = useState([]);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
 
   // Editing
   const [editingItem, setEditingItem] = useState(null);
 
   // Load items and units
 useEffect(() => {
-  const unsub = onSnapshot(collection(db, "items"), (snapshot) => {
+  const q = query(
+    collection(db, "items"),
+    where("currency", "==", currency)
+  );
+  const unsub = onSnapshot(q, (snapshot) => {
     const list = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
     setItems(list);
+    
+    // Extract unique categories
+    const uniqueCategories = [...new Set(list.map(item => item.category).filter(cat => cat))];
+    setCategories(uniqueCategories.sort());
+    setLoadingItems(false); // 🔑 IMPORTANT
   });
 
   return () => unsub(); // cleanup listener on unmount
-}, []);  // Save to localStorage
+}, [currency]);  // Save to localStorage
 // Load company info
 useEffect(() => {
   let mounted = true;
@@ -51,9 +66,24 @@ useEffect(() => {
 useEffect(() => {
   const unsub = onSnapshot(collection(db, "units"), (snapshot) => {
     const firestoreUnits = snapshot.docs.map((doc) => doc.data().name);
-    setUnits([...new Set([...defaultUnits, ...firestoreUnits])]);
+    setUnits([...new Set([...DEFAULT_UNITS, ...firestoreUnits])]);
   });
   return () => unsub();
+}, []);
+
+// Close category dropdown on outside click
+useEffect(() => {
+  const handleClickOutside = (e) => {
+    const categoryInput = document.querySelector('input[name="category"]');
+    const categoryDropdown = document.querySelector('.category-dropdown');
+    
+    if (categoryInput && !categoryInput.contains(e.target) && categoryDropdown && !categoryDropdown.contains(e.target)) {
+      setShowCategoryDropdown(false);
+    }
+  };
+  
+  window.addEventListener("click", handleClickOutside);
+  return () => window.removeEventListener("click", handleClickOutside);
 }, []);  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
 const handleAdd = async () => {
@@ -64,6 +94,7 @@ const handleAdd = async () => {
     unit: form.unit,
     rate: form.rate,
     category: form.category,
+    currency,
   };
 
   const docRef = await addDoc(collection(db, "items"), newItem);
@@ -172,7 +203,12 @@ const handleFileUpload = (e) => {
 const handleExport = () => {
   if (items.length === 0) return alert("No items to export");
 
-  const ws = XLSX.utils.json_to_sheet(items.map(({ id, ...rest }) => rest));
+  const rows = items.map((item) => {
+    const row = { ...item };
+    delete row.id;
+    return row;
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Items");
   XLSX.writeFile(wb, "items_export.xlsx");
@@ -180,103 +216,130 @@ const handleExport = () => {
 
 
   return (
-    <div className="p-8 min-h-screen bg-gradient-to-b from-blue-50 to-blue-100">
-      <h2 className="text-2xl font-bold text-blue-700 mb-6 flex items-center gap-2">
-        📋 Manage Items
-      </h2>
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-3xl font-bold bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent mb-2 flex items-center gap-2">
+          📋 Manage Items
+        </h2>
+        <p className="text-slate-600 dark:text-slate-400">Create, update and organize your inventory items</p>
+      </div>
 
-      {/* Add form */}
-{/* Add form */}
-<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-4 mb-6">
-  {/* Item name */}
-  <input
-    name="name"
-    value={form.name}
-    onChange={handleChange}
-    placeholder="Item name"
-    className="p-3 border rounded-lg w-full"
-  />
+      {/* Add Item Form */}
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl border border-slate-200/80 dark:border-slate-700/70 p-6 shadow-sm space-y-4">
+        <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Add New Item</h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Item Name */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2 uppercase tracking-wide">Name</label>
+            <input
+              name="name"
+              value={form.name}
+              onChange={handleChange}
+              placeholder="Enter item name"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+          </div>
 
-  {/* Unit dropdown */}
-  <select
-    name="unit"
-    value={form.unit}
-    onChange={handleChange}
-    className="p-3 border rounded-lg w-full"
-  >
-    <option value="">Select unit</option>
-    {units.map((u) => (
-      <option key={u} value={u}>
-        {u}
-      </option>
-    ))}
-  </select>
+          {/* Unit */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2 uppercase tracking-wide">Unit</label>
+            <select
+              name="unit"
+              value={form.unit}
+              onChange={handleChange}
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            >
+              <option value="">Select unit</option>
+              {units.map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
+          </div>
 
-  {/* New unit + add button */}
-  <div className="flex gap-2 col-span-1 md:col-span-2 xl:col-span-2">
-    <input
-      type="text"
-      placeholder="New unit"
-      value={newUnit}
-      onChange={(e) => setNewUnit(e.target.value)}
-      className="p-3 border rounded-lg flex-1"
-    />
-    <button
-      onClick={handleAddUnit}
-      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow transition shrink-0"
-    >
-      +
-    </button>
-  </div>
+          {/* Rate */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2 uppercase tracking-wide">Rate</label>
+            <input
+              name="rate"
+              value={form.rate}
+              onChange={handleChange}
+              placeholder="0.00"
+              type="number"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+          </div>
 
-  {/* Rate */}
-  <input
-    name="rate"
-    value={form.rate}
-    onChange={handleChange}
-    placeholder="Rate"
-    type="number"
-    className="p-3 border rounded-lg w-full"
-  />
+          {/* Category */}
+          <div className="relative">
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2 uppercase tracking-wide">Category</label>
+            <input
+              name="category"
+              value={form.category}
+              onChange={(e) => {
+                setForm({ ...form, category: e.target.value });
+                setShowCategoryDropdown(true);
+              }}
+              onFocus={() => setShowCategoryDropdown(true)}
+              placeholder="Select or create"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+            
+            {showCategoryDropdown && categories.length > 0 && (
+              <div className="category-dropdown absolute z-20 mt-1 w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg shadow-lg max-h-40 overflow-auto">
+                {categories
+                  .filter((cat) =>
+                    cat.toLowerCase().includes(form.category.toLowerCase())
+                  )
+                  .map((cat) => (
+                    <div
+                      key={cat}
+                      onClick={() => {
+                        setForm({ ...form, category: cat });
+                        setShowCategoryDropdown(false);
+                      }}
+                      className="px-4 py-2 cursor-pointer hover:bg-sky-100 dark:hover:bg-slate-600 text-sm dark:text-white transition-colors"
+                    >
+                      {cat}
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        </div>
 
-  {/* Category */}
-  <input
-    name="category"
-    value={form.category}
-    onChange={handleChange}
-    placeholder="Category (optional)"
-    className="p-3 border rounded-lg w-full"
-  />
-  
+        {/* Add Item Button */}
+        <button
+          onClick={handleAdd}
+          className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white px-6 py-3 rounded-lg transition-all duration-200 font-semibold shadow-lg hover:shadow-xl"
+        >
+          ➕ Add Item
+        </button>
+      </div>
 
-  {/* Add button */}
-  <button
-    onClick={handleAdd}
-    className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold w-full"
-  >
-    ➕ Add Item
-  </button>
-</div>
-<div className="flex gap-2 mt-4">
-  <input
-    type="text"
-    value={newUnit}
-    onChange={(e) => setNewUnit(e.target.value)}
-    placeholder="Enter new unit"
-    className="p-3 border rounded-lg w-full"
-  />
-  <button
-    onClick={handleAddUnit}
-    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
-  >
-    ➕ Add Unit
-  </button>
-</div>
+      {/* New Unit Section */}
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl border border-slate-200/80 dark:border-slate-700/70 p-6 shadow-sm">
+        <h3 className="text-lg font-semibold text-slate-800 dark:text-white mb-4">Add New Unit</h3>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={newUnit}
+            onChange={(e) => setNewUnit(e.target.value)}
+            placeholder="Enter new unit (e.g., cft, Kgs, Ltrs)"
+            className="flex-1 px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-green-500 transition-all"
+          />
+          <button
+            onClick={handleAddUnit}
+            className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-6 py-3 rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all duration-200 whitespace-nowrap"
+          >
+            ➕ Add Unit
+          </button>
+        </div>
+      </div>
 
-
-      {/* Import Button */}
-      <div className="flex items-center gap-3 mb-6">
-        <label className="bg-gray-200 px-4 py-2 rounded-lg cursor-pointer hover:bg-gray-300">
+      {/* Import/Export Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <label className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white px-6 py-4 rounded-lg cursor-pointer shadow-lg hover:shadow-xl transition-all duration-200 font-semibold flex items-center gap-2 justify-center">
           📤 Import from Excel
           <input
             type="file"
@@ -285,56 +348,77 @@ const handleExport = () => {
             className="hidden"
           />
         </label>
-        <span className="text-sm text-gray-500">Supported: .xlsx, .xls, .csv</span>
+        
+        <button
+          onClick={handleExport}
+          className="bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white px-6 py-4 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 font-semibold flex items-center gap-2 justify-center"
+        >
+          📥 Export to Excel
+        </button>
       </div>
-      <button
-  onClick={handleExport}
-  className="bg-blue-200 hover:bg-blue-300 text-blue-800 px-4 py-2 rounded-lg shadow transition"
->
-  📤 Export to Excel
-</button>
 
-
-      {/* Items table */}
-      <div className="mt-8 overflow-x-auto">
-        {items.length === 0 ? (
-          <p className="text-gray-500 mt-4">No items saved yet.</p>
+      {/* Items Table */}
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl border border-slate-200/80 dark:border-slate-700/70 shadow-lg overflow-hidden">
+        {loadingItems ? (
+          <div className="p-8">
+            <SkeletonLoader rows={5} variant="table" />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="text-center py-16 px-4">
+            <p className="text-slate-500 dark:text-slate-400 text-lg">📭 No items yet. Create your first item to get started!</p>
+          </div>
         ) : (
-          <table className="w-full border-collapse rounded-lg overflow-hidden shadow-sm">
-            <thead>
-              <tr className="bg-blue-100">
-                <th className="p-2 text-left">Item</th>
-                <th className="p-2 text-left">Unit</th>
-                <th className="p-2 text-left">Rate</th>
-                <th className="p-2 text-left">Category</th>
-                <th className="p-2 text-left">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((i) => (
-                <tr key={i.id} className="border-b hover:bg-blue-50">
-                  <td className="p-2">{i.name}</td>
-                  <td className="p-2">{i.unit}</td>
-                  <td className="p-2">{i.rate}</td>
-                  <td className="p-2">{i.category}</td>
-                  <td className="p-2 flex gap-3">
-                    <button
-                      onClick={() => handleEdit(i)}
-                      className="text-blue-600 hover:underline"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(i.id)}
-                      className="text-red-500 hover:underline"
-                    >
-                      Delete
-                    </button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gradient-to-r from-sky-600 to-indigo-600 text-white">
+                  <th className="px-6 py-4 text-left text-sm font-semibold">Item Name</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold">Unit</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold">Rate</th>
+                  <th className="px-6 py-4 text-left text-sm font-semibold">Category</th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                {items.map((i) => (
+                  <tr key={i.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <td className="px-6 py-4 text-sm font-medium text-slate-800 dark:text-white">{i.name}</td>
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                      <span className="bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 px-3 py-1 rounded-full text-xs font-semibold">
+                        {i.unit}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm font-semibold text-sky-600 dark:text-sky-400">{i.rate}</td>
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                      {i.category ? (
+                        <span className="bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-3 py-1 rounded-full text-xs font-semibold">
+                          {i.category}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleEdit(i)}
+                          className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(i.id)}
+                          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -342,14 +426,12 @@ const handleExport = () => {
         💡 Saved items and units will appear automatically in Quotation, Invoice, and Material Request.
       </p>
 
-<footer className="text-center text-gray-600 mt-20 text-sm">
-  © {new Date().getFullYear()} {companyInfo?.name || "My Company LTD"} — All rights reserved.
-</footer>
+
 
       {/* Edit Modal */}
       {editingItem && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white p-6 rounded-xl shadow-xl w-96">
+          <div className="bg-white/95 dark:bg-slate-900/90 p-6 rounded-2xl shadow-2xl w-96 border border-slate-200 dark:border-slate-700">
             <h3 className="text-lg font-semibold mb-4 text-blue-700">✏️ Edit Item</h3>
             <input
               name="name"
@@ -400,3 +482,4 @@ const handleExport = () => {
     </div>
   );
 }
+

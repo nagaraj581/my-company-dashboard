@@ -1,6 +1,14 @@
 // src/pages/invoice/InvoicePrint.js
 import { formatCurrency, amountToWords, parseInvoiceDate } from "./invoiceUtils";
 
+function getCurrencySymbol(currency) {
+  return currency === "AED" ? "AED" : "₹";
+}
+
+function getCurrencyWords(currency) {
+  return currency === "AED" ? "Dirhams Only" : "Rupees Only";
+}
+
 export function renderInvoiceHtml(payload) {
   const {
     companyInfo = {},
@@ -16,6 +24,7 @@ export function renderInvoiceHtml(payload) {
     amountReceived = 0,
     terms = "",
     invoiceTitle = "INVOICE",
+    currency = "INR",
   } = payload || {};
 
   const d = parseInvoiceDate(invoiceDate);
@@ -182,24 +191,25 @@ export function renderInvoiceHtml(payload) {
 
   <div class="summary-box">
     <div style="display:flex; justify-content:space-between;">
-      <span>Subtotal</span><span>₹ ${formatCurrency(totals.subtotal)}</span>
+      <span>Subtotal</span><span>${formatCurrency(totals.subtotal, currency)}</span>
     </div>
     <div style="display:flex; justify-content:space-between; margin-top:6px;">
-      <span>Discount</span><span>₹ ${formatCurrency(totals.discount)}</span>
+      <span>Discount</span><span>${formatCurrency(totals.discount, currency)}</span>
     </div>
     <div style="border-top:1px solid #ccc; margin-top:8px; padding-top:8px; display:flex; justify-content:space-between; font-weight:bold;">
-      <span>Total</span><span>₹ ${formatCurrency(totals.total)}</span>
+      <span>Total</span><span>${formatCurrency(totals.total, currency)}</span>
     </div>
     ${
       Number(amountReceived || 0) > 0
         ? `
     <div style="margin-top:6px; display:flex; justify-content:space-between;">
-      <span>Amount Received</span><span>₹ ${formatCurrency(amountReceived)}</span>
+      <span>Amount Received</span><span>${formatCurrency(amountReceived, currency)}</span>
     </div>
 
     <div style="color:#b91c1c;margin-top:6px;display:flex;justify-content:space-between;font-weight:bold;">
-      <span>Balance Due</span><span>₹ ${formatCurrency(
-        totals.balance
+      <span>Balance Due</span><span>${formatCurrency(
+        totals.balance,
+        currency
       )}</span>
     </div>`
         : ""
@@ -210,7 +220,7 @@ export function renderInvoiceHtml(payload) {
 
   <div style="margin-top:30px;">
     <strong>Amount (in words):</strong>
-    ${amountToWords(amountForWords)}
+    ${amountToWords(amountForWords)} ${getCurrencyWords(currency)}
   </div>
 
   <div class="signature">

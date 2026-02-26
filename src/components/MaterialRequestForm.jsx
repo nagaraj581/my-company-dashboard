@@ -14,6 +14,7 @@ import jsPDF from "jspdf";
 import "jspdf-autotable";
 import { getCompanyInfo } from "../config/companyInfo";
 import { useUnits } from "../hooks/useUnits";
+import { SkeletonLoader } from "./SkeletonLoader";
 
 
 export default function MaterialRequestForm() {
@@ -23,6 +24,7 @@ export default function MaterialRequestForm() {
   const [selectedItems, setSelectedItems] = useState([]);
   const [projectName, setProjectName] = useState("");
   const [requests, setRequests] = useState([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [companyInfo, setCompanyInfo] = useState(null);
@@ -50,6 +52,7 @@ export default function MaterialRequestForm() {
         ...doc.data(),
       }));
       setRequests(reqs.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds));
+      setLoadingRequests(false); // 🔑 IMPORTANT
     });
     return () => unsub();
   }, []);
@@ -386,7 +389,9 @@ const handleAddItem = () => {
           🗂️ Saved Requests
         </h3>
 
-        {requests.length === 0 ? (
+        {loadingRequests ? (
+          <SkeletonLoader rows={3} variant="card" />
+        ) : requests.length === 0 ? (
           <p className="text-gray-500">No requests saved yet.</p>
         ) : (
           requests.map((req) => (

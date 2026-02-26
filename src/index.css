@@ -1,10 +1,39 @@
 @import "tailwindcss";
 
-body {
-  font-family: 'Inter', sans-serif;
-  background-color: #f8fafc;
-  color: #1e293b;
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+
+:root {
+  --app-bg-a: #f5f7ff;
+  --app-bg-b: #eef8ff;
+  --app-bg-c: #f8f4ff;
+  --app-text: #0f172a;
 }
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  color: var(--app-text);
+  background:
+    radial-gradient(1000px 600px at 12% -10%, rgba(56, 189, 248, 0.16), transparent 60%),
+    radial-gradient(900px 500px at 88% -5%, rgba(129, 140, 248, 0.14), transparent 58%),
+    linear-gradient(135deg, var(--app-bg-a) 0%, var(--app-bg-b) 55%, var(--app-bg-c) 100%);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.dark body {
+  color: #e2e8f0;
+  background:
+    radial-gradient(900px 500px at 12% -10%, rgba(14, 165, 233, 0.13), transparent 58%),
+    radial-gradient(900px 500px at 88% -5%, rgba(99, 102, 241, 0.14), transparent 60%),
+    linear-gradient(140deg, #0a1120 0%, #0f172a 55%, #111827 100%);
+}
+
 /* --- Table styling improvements --- */
 table {
   border-collapse: separate;

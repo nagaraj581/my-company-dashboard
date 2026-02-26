@@ -8,6 +8,14 @@ import {
   calcTotals,
 } from "./invoiceUtils";
 
+function getCurrencySymbol(currency) {
+  return currency === "AED" ? "AED" : "Rs";
+}
+
+function getCurrencyWords(currency) {
+  return currency === "AED" ? "Dirhams Only" : "Rupees Only";
+}
+
 export async function exportPdf(invoice) {
   const {
     companyInfo = {},
@@ -19,6 +27,7 @@ export async function exportPdf(invoice) {
     discountType = "amount",
     discountValue = 0,
     terms = "",
+    currency = "INR",
   } = invoice;
 
   const doc = new jsPDF("p", "pt", "a4");
@@ -95,10 +104,10 @@ export async function exportPdf(invoice) {
     body: items.map((r, i) => [
       i + 1,
       r.item,
-      formatCurrency(r.rate),
+      formatCurrency(r.rate, currency),
       r.quantity.toLocaleString("en-IN"),
       r.unit,
-      formatCurrency(r.amount),
+      formatCurrency(r.amount, currency),
     ]),
     theme: "grid",
     headStyles: {
@@ -139,7 +148,7 @@ export async function exportPdf(invoice) {
 
   // Subtotal
   doc.text("Subtotal:", labelX, ty);
-  doc.text(`Rs. ${formatCurrency(subtotal)}`, valueX, ty, { align: "right" });
+  doc.text(`${formatCurrency(subtotal, currency)}`, valueX, ty, { align: "right" });
 
   ty += 18;
 
@@ -147,16 +156,16 @@ export async function exportPdf(invoice) {
   const discountLabel =
     discountType === "percent"
       ? `Discount (${discountValue}%)`
-      : `Discount (Rs.${discountValue})`;
+      : `Discount (${discountValue})`;
 
   doc.text(discountLabel, labelX, ty);
-  doc.text(`Rs. ${formatCurrency(discount)}`, valueX, ty, { align: "right" });
+  doc.text(`${formatCurrency(discount, currency)}`, valueX, ty, { align: "right" });
 
   ty += 18;
 
   // Round off
   doc.text("Round Off:", labelX, ty);
-  doc.text(`Rs. ${formatCurrency(roundOff)}`, valueX, ty, { align: "right" });
+  doc.text(`${formatCurrency(roundOff, currency)}`, valueX, ty, { align: "right" });
 
   ty += 24;
 
@@ -164,7 +173,7 @@ export async function exportPdf(invoice) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
   doc.text("TOTAL:", labelX, ty);
-  doc.text(`Rs. ${formatCurrency(total)}`, valueX, ty, { align: "right" });
+  doc.text(`${formatCurrency(total, currency)}`, valueX, ty, { align: "right" });
 
   // AMOUNT RECEIVED (optional)
 if (invoice.amountReceived > 0) {
@@ -174,7 +183,7 @@ if (invoice.amountReceived > 0) {
 
   doc.text("Amount Received:", labelX, ty);
   doc.text(
-    `Rs. ${formatCurrency(invoice.amountReceived)}`,
+    `${formatCurrency(invoice.amountReceived, currency)}`,
     valueX,
     ty,
     { align: "right" }
@@ -187,7 +196,7 @@ if (invoice.amountReceived > 0) {
   doc.setFont("helvetica", "bold");
   doc.text("Balance Due:", labelX, ty);
   doc.text(
-    `Rs. ${formatCurrency(balance)}`,
+    `${formatCurrency(balance, currency)}`,
     valueX,
     ty,
     { align: "right" }
@@ -247,7 +256,7 @@ const amountForWords =
 doc.setFont("helvetica", "normal");
 doc.setFontSize(11);
 doc.text(
-  `Amount in words: Rupees ${amountToWords(amountForWords)}`,
+  `Amount in words: ${amountToWords(amountForWords)} ${getCurrencyWords(currency)}`,
   left,
   wordsY
 );

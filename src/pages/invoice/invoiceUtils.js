@@ -4,11 +4,21 @@
 import { collection, getDocs, query, orderBy, limit } from "firebase/firestore";
 import { db } from "../../firebase";
 
-export function formatCurrency(v) {
-  return Number(v || 0).toLocaleString("en-IN", {
+export function getCurrencySymbol(currency) {
+  if (currency === "AED") return "AED";
+  if (currency === "INR") return "Rs";
+  return "";
+}
+
+export function formatCurrency(value, currency) {
+  if (value === null || value === undefined || value === "") return "";
+
+  const symbol = getCurrencySymbol(currency);
+
+  return `${symbol} ${Number(value).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  });
+  })}`;
 }
 
 export function amountToWords(amount) {
@@ -50,9 +60,8 @@ export function amountToWords(amount) {
 
   const intWords = parts.join(" ").trim() || "Zero";
 
-  let result = `${intWords} Rupee${intPart !== 1 ? "s" : ""}`;
+  let result = intWords;
   if (paise) result += ` and ${twoDigitWords(paise)} Paise`;
-  result += " Only";
   return result;
 }
 

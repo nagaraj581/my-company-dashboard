@@ -72,7 +72,18 @@ export async function getActiveCompanyId() {
   return snap.exists() ? snap.data().id : null;
 }
 
+
 export async function setActiveCompanyId(id) {
-  if (!id) throw new Error("No company id specified");
-  await setDoc(doc(db, "settings", "activeCompany"), { id });
+  const ref = doc(db, "settings", "activeCompany");
+
+  if (id === null) {
+    await deleteDoc(ref);
+  } else {
+    await setDoc(ref, { id });
+  }
+
+  // 🔔 notify app
+  window.dispatchEvent(new Event("companyChanged"));
 }
+
+

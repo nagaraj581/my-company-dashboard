@@ -1,58 +1,63 @@
 import { Link, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { doc, onSnapshot, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Menu, X } from "lucide-react";
+import { useCurrency } from "../context/CurrencyContext";
 
 export default function Navbar({ user, onLogout, darkMode, setDarkMode }) {
   const location = useLocation();
   const [companyName, setCompanyName] = useState("My Company LTD");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { currency, setCurrency } = useCurrency();
 
-useEffect(() => {
-  // 1) Listen to activeCompany (settings/activeCompany)
-  const activeRef = doc(db, "settings", "activeCompany");
-  const unsubActive = onSnapshot(activeRef, async (activeSnap) => {
-    if (!activeSnap.exists()) {
-      setCompanyName("My Company LTD");
-      return;
-    }
-
-    const activeId = activeSnap.data().id;
-    if (!activeId) {
-      setCompanyName("My Company LTD");
-      return;
-    }
-
-    // 2) Now listen to the actual company document
-    const companyRef = doc(db, "companies", activeId);
-    const unsubCompany = onSnapshot(companyRef, (companySnap) => {
-      if (companySnap.exists()) {
-        const data = companySnap.data();
-        setCompanyName(data.name || "My Company LTD");
+  useEffect(() => {
+    const activeRef = doc(db, "settings", "activeCompany");
+    const unsubActive = onSnapshot(activeRef, (activeSnap) => {
+      if (!activeSnap.exists()) {
+        setCompanyName("My Company LTD");
+        return;
       }
+
+      const activeId = activeSnap.data().id;
+      if (!activeId) {
+        setCompanyName("My Company LTD");
+        return;
+      }
+
+      const companyRef = doc(db, "companies", activeId);
+      const unsubCompany = onSnapshot(companyRef, (companySnap) => {
+        if (companySnap.exists()) {
+          const data = companySnap.data();
+          setCompanyName(data.name || "My Company LTD");
+        }
+      });
+
+      return () => unsubCompany();
     });
 
-    return () => unsubCompany();
-  });
+    return () => unsubActive();
+  }, []);
 
-  return () => unsubActive();
-}, []);
-
-  // ✅ Dynamic initials (e.g., "Sharada Furnitures" → "SF")
-  const companyInitials = companyName
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
-    .join("") || "MC";
+  const companyInitials =
+    companyName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((word) => word[0]?.toUpperCase())
+      .join("") || "MC";
 
   const navLinks = [
     { name: "Dashboard", path: "/" },
     { name: "Material Request", path: "/material-request" },
+    { name: "Material Receipt", path: "/material-receipt" },
     { name: "Quotation", path: "/quotation" },
     { name: "Invoice", path: "/invoice" },
     { name: "Items", path: "/items" },
-    { name: "Company Info", path: "/company" }
+    { name: "Inventory", path: "/inventory" },
+    { name: "Projects", path: "/projects" },
+    { name: "Project Consumption", path: "/project-consumption" },
+    { name: "Company Info", path: "/company" },
   ];
 
   const firstName = user?.displayName
@@ -61,92 +66,147 @@ useEffect(() => {
 
   return (
     <nav
-      className={`${
-        darkMode ? "bg-gray-800 text-white" : "bg-blue-700 text-white"
-      } shadow-lg fixed top-0 left-0 w-full z-50`}
+      className={`fixed top-0 left-0 w-full z-50 border-b backdrop-blur-xl transition-all duration-300 ${
+        darkMode
+          ? "bg-slate-950/85 border-slate-700/70 text-slate-100"
+          : "bg-white/80 border-white/70 text-slate-900"
+      } shadow-[0_8px_30px_rgba(2,6,23,0.12)]`}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center sm:justify-between h-auto sm:h-16 py-2 sm:py-0">
-        
-        {/* ✅ Left: Logo + Company Name */}
-        <div className="flex items-center gap-3 mb-2 sm:mb-0">
-          <div
-            className={`h-10 w-10 rounded-full flex items-center justify-center shadow-sm ${
-              darkMode ? "bg-gray-700" : "bg-white"
-            }`}
-          >
-            <span
-              className={`font-bold text-lg ${
-                darkMode ? "text-gray-100" : "text-blue-700"
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16">
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <div className="h-10 w-10 rounded-2xl flex items-center justify-center shadow-md bg-gradient-to-br from-sky-500 to-indigo-600">
+              <span className="font-extrabold text-xs tracking-wide text-white">
+                {companyInitials}
+              </span>
+            </div>
+            <Link
+              to="/"
+              className={`text-lg font-extrabold tracking-tight truncate max-w-[220px] ${
+                darkMode ? "text-slate-100" : "text-slate-900"
               }`}
             >
-              {companyInitials}
-            </span>
+              {companyName}
+            </Link>
           </div>
 
-          <Link
-            to="/"
-            className="text-lg sm:text-xl font-bold tracking-wide hidden sm:block"
-          >
-            {companyName}
-          </Link>
-        </div>
+          <div className="hidden lg:flex items-center gap-1.5 p-1 rounded-2xl border border-slate-200/70 dark:border-slate-700/70 bg-white/40 dark:bg-slate-900/40">
+            {navLinks.map((link) => (
+              <Link
+                key={link.path}
+                to={link.path}
+                className={`px-3.5 py-2 rounded-xl text-sm font-semibold transition-all duration-200 ${
+                  location.pathname === link.path
+                    ? "bg-gradient-to-r from-sky-500 to-indigo-600 text-white shadow-lg"
+                    : darkMode
+                    ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                    : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                {link.name}
+              </Link>
+            ))}
+          </div>
 
-        {/* ✅ Middle: Navigation Links */}
-        <div className="hidden lg:flex flex-wrap justify-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className={`p-2.5 rounded-xl transition-all duration-200 active:scale-95 ${
+                darkMode
+                  ? "bg-slate-800 hover:bg-slate-700 text-amber-300"
+                  : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"
+              }`}
+              aria-label="Toggle dark mode"
+            >
+              {darkMode ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+
+            <div className="hidden sm:block relative">
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className={`appearance-none cursor-pointer px-3 py-2 rounded-xl text-sm font-semibold border focus:ring-2 focus:ring-sky-500 outline-none transition-all ${
+                  darkMode
+                    ? "bg-slate-900 border-slate-700 text-slate-100"
+                    : "bg-white border-slate-200 text-slate-900"
+                }`}
+              >
+                <option value="AED">UAE</option>
+                <option value="INR">INDIA</option>
+              </select>
+            </div>
+
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className={`lg:hidden p-2.5 rounded-xl transition-colors active:scale-95 ${
+                darkMode
+                  ? "bg-slate-800 hover:bg-slate-700"
+                  : "bg-white border border-slate-200 hover:bg-slate-100"
+              }`}
+              aria-label="Toggle menu"
+            >
+              {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
+            </button>
+
+            {user && (
+              <div className="hidden sm:flex items-center gap-2.5 pl-3 border-l border-slate-300/40 dark:border-slate-700/60">
+                <img
+                  src={
+                    user.photoURL ||
+                    "https://ui-avatars.com/api/?name=User&background=ffffff&color=0f172a&bold=true"
+                  }
+                  alt="User Avatar"
+                  className="h-9 w-9 rounded-full ring-2 ring-slate-200 dark:ring-slate-700 object-cover"
+                  referrerPolicy="no-referrer"
+                />
+                <span className="text-sm font-semibold truncate max-w-[110px]">
+                  {firstName}
+                </span>
+              </div>
+            )}
+
+            <button
+              onClick={onLogout}
+              className="hidden sm:block bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow transition-all"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={`lg:hidden overflow-hidden transition-all duration-300 ease-in-out ${
+          mobileMenuOpen ? "max-h-[34rem] opacity-100" : "max-h-0 opacity-0"
+        }`}
+      >
+        <div
+          className={`mx-3 mb-3 p-3 rounded-2xl border shadow-xl ${
+            darkMode
+              ? "bg-slate-900/95 border-slate-700"
+              : "bg-white/95 border-slate-200"
+          }`}
+        >
           {navLinks.map((link) => (
             <Link
               key={link.path}
               to={link.path}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+              onClick={() => setMobileMenuOpen(false)}
+              className={`block px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
                 location.pathname === link.path
-                  ? `${
-                      darkMode ? "bg-gray-700" : "bg-white/30"
-                    } shadow-sm`
-                  : `hover:${darkMode ? "bg-gray-700" : "bg-white/20"}`
+                  ? "bg-gradient-to-r from-sky-500 to-indigo-600 text-white"
+                  : darkMode
+                  ? "text-slate-200 hover:bg-slate-800"
+                  : "text-slate-700 hover:bg-slate-100"
               }`}
             >
               {link.name}
             </Link>
           ))}
-        </div>
 
-        {/* ✅ Right: Dark Mode Toggle + User Info + Logout */}
-        <div className="flex items-center gap-3 mt-2 sm:mt-0">
-          {/* Dark Mode Toggle */}
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className={`p-2 rounded-lg transition ${
-              darkMode
-                ? "bg-gray-700 hover:bg-gray-600"
-                : "bg-white/20 hover:bg-white/30"
-            }`}
-            aria-label="Toggle dark mode"
-          >
-            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-
-          {/* User Info */}
-          {user && (
-            <div className="flex items-center gap-2">
-              <img
-                src={
-                  user.photoURL ||
-                  "https://ui-avatars.com/api/?name=User&background=ffffff&color=0f172a&bold=true"
-                }
-                alt="User Avatar"
-                className="h-8 w-8 rounded-full border border-gray-200"
-                referrerPolicy="no-referrer"
-              />
-              <span className="hidden sm:inline text-sm font-medium truncate max-w-[100px]">
-                {firstName}
-              </span>
-            </div>
-          )}
-
-          {/* Logout */}
           <button
             onClick={onLogout}
-            className="bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg shadow transition"
+            className="w-full mt-3 text-left px-4 py-3 rounded-xl text-sm font-semibold bg-rose-500/10 text-rose-500 hover:bg-rose-500/15 transition-all"
           >
             Sign Out
           </button>

@@ -8,6 +8,7 @@ import {
   doc,
   onSnapshot,
   query,
+  where,
   orderBy,
   limit,
   Timestamp,
@@ -18,6 +19,9 @@ import autoTable from "jspdf-autotable";
 import { getCompanyInfo } from "../config/companyInfo";
 import { useNavigate } from "react-router-dom";
 import { getAuth } from "firebase/auth";
+import { useCurrency } from "../context/CurrencyContext";
+import { SkeletonLoader } from "../components/SkeletonLoader";
+
 
 
 
@@ -25,6 +29,7 @@ export default function Quotation() {
   const [items, setItems] = useState([]);
   const [quotationItems, setQuotationItems] = useState([]);
   const [quotations, setQuotations] = useState([]);
+  const [loadingQuotations, setLoadingQuotations] = useState(true);
   const [selectedItem, setSelectedItem] = useState("");
   const [customName, setCustomName] = useState("");
   const [unit, setUnit] = useState("");
@@ -35,18 +40,30 @@ export default function Quotation() {
   const [editingIndex, setEditingIndex] = useState(null);
   const [editingQuotation, setEditingQuotation] = useState(null);
   const [hideRates, setHideRates] = useState(false);
-    const auth = getAuth();
-const loggedUser = auth.currentUser?.displayName || "User";
+  const { currency } = useCurrency();
+  const currencySymbol = currency === "AED" ? "AED" : "₹";
+
+  const auth = getAuth();
+  const loggedUser = auth.currentUser?.displayName || "User";
+  const [preparedBy, setPreparedBy] = useState(loggedUser);
 
 
   // ✅ Load items from Firestore
   useEffect(() => {
-    const fetchItems = async () => {
-      const querySnapshot = await getDocs(collection(db, "items"));
-      setItems(querySnapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-    };
-    fetchItems();
-  }, []);
+  if (!currency) return; // 🔑 IMPORTANT GUARD
+
+  const q = query(
+    collection(db, "items"),
+    where("currency", "==", currency)
+  );
+
+  const unsub = onSnapshot(q, (snap) => {
+    setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  });
+
+  return () => unsub();
+}, [currency]);
+
   // ... after useState declarations and after fetch items useEffect
 useEffect(() => {
   if (!selectedItem || selectedItem === "custom") return;
@@ -71,6 +88,7 @@ useEffect(() => {
         ...doc.data(),
       }));
       setQuotations(list.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds));
+      setLoadingQuotations(false); // 🔑 IMPORTANT
     });
     return () => unsub();
   }, []);
@@ -183,6 +201,7 @@ const handleAddItem = () => {
           customer,
           items: quotationItems,
           total,
+          preparedBy,
         });
         alert("✅ Quotation updated!");
       } else {
@@ -193,6 +212,8 @@ const handleAddItem = () => {
           customer,
           items: quotationItems,
           total,
+          currency,
+          preparedBy,
           createdAt: Timestamp.now(),
         });
         alert(`✅ Quotation ${quotationNo} saved!`);
@@ -224,8 +245,17 @@ const handleAddItem = () => {
   };
 
 // ✅ FINAL — CLEAN, ERROR-FREE PDF EXPORT
-const handleExportPDF = async (q) => {
-  const companyInfo = await getCompanyInfo();
+// ✅ Helper functions for currency
+function getCurrencySymbol(curr) {
+  return curr === "AED" ? "AED" : "Rs";
+}
+
+function getCurrencyWords(curr) {
+  return curr === "AED" ? "Dirhams Only" : "Rupees Only";
+}
+
+const handleExportPDF = async (q, preview = false) => {
+    const companyInfo = await getCompanyInfo();
   const doc = new jsPDF("p", "pt", "a4");
 
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -361,7 +391,7 @@ const handleExportPDF = async (q) => {
 
   doc.text("Total:", totalXLabel, finalY);
   doc.text(
-    `Rs. ${total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
+    `${getCurrencySymbol(q.currency || currency)} ${total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
     totalXValue,
     finalY,
     { align: "right" }
@@ -372,12 +402,12 @@ const handleExportPDF = async (q) => {
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(`Amount in words: ${words}`, left, finalY + 40);
+  doc.text(`Amount in words: ${words} ${getCurrencyWords(q.currency || currency)}`, left, finalY + 40);
 
   /* ----------------------------- SIGNATURE ---------------------------- */
   const sigY = finalY + 100;
 
-  const user = localStorage.getItem("userName") || loggedUser;
+  const user = q.preparedBy || loggedUser;
 
   doc.line(left, sigY, left + 180, sigY);
   doc.text(`Prepared By: ${user}`, left, sigY + 15);
@@ -396,12 +426,16 @@ const handleExportPDF = async (q) => {
   );
 
   /* ------------------------------- SAVE ------------------------------ */
+if (preview) {
+  const blobUrl = doc.output("bloburl");
+  window.open(blobUrl, "_blank");
+} else {
   doc.save(`${q.quotationNo}.pdf`);
-};
+}};
 
 // ✅ Helper: Convert numbers to words (Indian format)
 function numberToWords(num) {
-  if (!num) return "Zero Rupees Only";
+  if (!num) return "Zero";
   num = Math.floor(num);
 
   const a = [
@@ -469,12 +503,12 @@ function numberToWords(num) {
     );
   }
 
-  return inWords(num) + " Rupees Only";
+  return inWords(num) || "Zero";
 }
 
 // ✅ Helper: Convert numbers to words (Indian format)
 function numberToWordsInIndianFormat(num) {
-  if (num === 0) return "Zero Rupees Only";
+  if (num === 0) return "Zero";
 
   const ones = [
     "",
@@ -537,247 +571,333 @@ function numberToWordsInIndianFormat(num) {
   if (thousand) words += threeDigits(thousand) + " Thousand ";
   if (hundred) words += threeDigits(hundred);
 
-  return (words.trim() + " Rupees Only").replace(/\s+/g, " ");
+  return words.trim().replace(/\s+/g, " ");
 }
 
   return (
-    <div className="p-8 min-h-screen bg-gradient-to-b from-blue-50 to-blue-100">
-      <h2 className="text-2xl font-bold text-blue-700 mb-6 flex items-center gap-2">
-        📑 Quotation
-      </h2>
-
-      {/* Customer */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-        <input
-          type="text"
-          value={customer}
-          onChange={(e) => setCustomer(e.target.value)}
-          placeholder="Enter customer / client name"
-          className="p-3 border rounded-lg"
-        />
+    <div className="space-y-8">
+      {/* Header */}
+      <div>
+        <h2 className="text-3xl font-bold bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent mb-2 flex items-center gap-2">
+          📑 Quotation
+        </h2>
+        <p className="text-slate-600 dark:text-slate-400">Create professional quotations for your clients</p>
       </div>
 
-      {/* Add Item */}
-      <div className="grid grid-cols-1 sm:grid-cols-6 gap-4 mb-4">
-        <select
-          value={selectedItem}
-          onChange={(e) => setSelectedItem(e.target.value)}
-          className="p-3 border rounded-lg"
-        >
-          <option value="">Select Item</option>
-          <option value="custom">➕ Custom Item</option>
-          {items.map((i) => (
-            <option key={i.id} value={i.id}>
-              {i.name}
-            </option>
-          ))}
-        </select>
+      {/* Customer Input */}
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl border border-slate-200/80 dark:border-slate-700/70 p-6 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+          <div className="space-y-2">
+            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">Customer Name</label>
+            <input
+              type="text"
+              value={customer}
+              onChange={(e) => setCustomer(e.target.value)}
+              placeholder="Enter customer or client name"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">💱 Currency</label>
+            <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-slate-700 border border-sky-200 dark:border-slate-600 font-semibold text-sky-700 dark:text-sky-400">
+              {currency}
+            </div>
+          </div>
+        </div>
+      </div>
 
-        {selectedItem === "custom" && (
-          <input
-            type="text"
-            value={customName}
-            onChange={(e) => setCustomName(e.target.value)}
-            placeholder="Item name"
-            className="p-3 border rounded-lg"
-          />
-        )}
-
+      {/* Add Item Section */}
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl border border-slate-200/80 dark:border-slate-700/70 p-6 shadow-sm space-y-4">
+        <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Add Items to Quotation</h3>
         
-        <input
-          type="number"
-          value={quantity}
-          onChange={(e) => setQuantity(e.target.value)}
-          placeholder="Qty"
-          className="p-3 border rounded-lg"
-        />
-        <input
-          type="text"
-          value={unit}
-          onChange={(e) => setUnit(e.target.value)}
-          placeholder="Unit"
-          className="p-3 border rounded-lg"
-        />
-        <input
-          type="number"
-          value={rate}
-          onChange={(e) => setRate(e.target.value)}
-          placeholder="Rate"
-          className="p-3 border rounded-lg"
-        />
-        <button
-          onClick={handleAddItem}
-          className={`${
-            editingIndex !== null
-              ? "bg-yellow-600 hover:bg-yellow-700"
-              : "bg-green-600 hover:bg-green-700"
-          } text-white font-semibold rounded-lg shadow transition px-4 py-2`}
-        >
-          {editingIndex !== null ? "✏️ Update" : "➕ Add"}
-        </button>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Item Selection */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Item</label>
+            <select
+              value={selectedItem}
+              onChange={(e) => setSelectedItem(e.target.value)}
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            >
+              <option value="">Select Item</option>
+              <option value="custom">➕ Custom Item</option>
+              {items.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Custom Item Name */}
+          {selectedItem === "custom" && (
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Item Name</label>
+              <input
+                type="text"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                placeholder="Enter custom item"
+                className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+              />
+            </div>
+          )}
+
+          {/* Quantity */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Qty</label>
+            <input
+              type="number"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="0"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+          </div>
+
+          {/* Unit */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Unit</label>
+            <input
+              type="text"
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              placeholder="e.g. Nos, Kgs"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+          </div>
+
+          {/* Rate */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Rate</label>
+            <input
+              type="number"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              placeholder="0.00"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+            />
+          </div>
+
+          {/* Add Button */}
+          <button
+            onClick={handleAddItem}
+            className={`self-end w-full ${
+              editingIndex !== null
+                ? "bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+                : "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
+            } text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 px-4 py-3`}
+          >
+            {editingIndex !== null ? "✏️ Update Item" : "➕ Add Item"}
+          </button>
+        </div>
       </div>
 
       {/* Items Table */}
       {quotationItems.length > 0 && (
-        <div className="overflow-x-auto mb-6">
-          <table className="w-full border-collapse bg-white rounded-lg shadow">
-            <thead>
-              <tr className="bg-blue-100">
-                <th className="p-2">Item</th>
-                <th className="p-2">Qty</th>
-                <th className="p-2">Unit</th>
-                <th className="p-2">Rate</th>
-                <th className="p-2">Amount</th>
-                <th className="p-2 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {quotationItems.map((i, idx) => (
-                <tr key={idx} className="border-b hover:bg-blue-50">
-                  <td className="p-2">{i.name}</td>
-                  <td className="p-2">{i.quantity}</td>
-                  <td className="p-2">{i.unit}</td>
-                  <td className="p-2">₹ {i.rate.toFixed(2)}</td>
-                  <td className="p-2 text-right font-semibold">
-                    ₹ {i.amount.toFixed(2)}
-                  </td>
-                  <td className="p-2 text-center">
-                    <button
-                      onClick={() => handleEditItem(idx)}
-                      className="text-yellow-600 hover:underline mr-2"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteItem(idx)}
-                      className="text-red-600 hover:underline"
-                    >
-                      Delete
-                    </button>
-                  </td>
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-600 shadow-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gradient-to-r from-sky-600 to-indigo-600 text-white">
+                  <th className="px-6 py-4 text-left text-sm font-semibold">Item</th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold">Qty</th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold">Unit</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold">Rate</th>
+                  <th className="px-6 py-4 text-right text-sm font-semibold">Amount</th>
+                  <th className="px-6 py-4 text-center text-sm font-semibold">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="text-right font-semibold mt-3 text-lg">
-            Total: ₹{" "}
-            {quotationItems.reduce((sum, i) => sum + i.amount, 0).toFixed(2)}
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                {quotationItems.map((i, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <td className="px-6 py-4 text-sm font-medium text-slate-800 dark:text-white">{i.name}</td>
+                    <td className="px-6 py-4 text-sm text-center text-slate-600 dark:text-slate-300">{i.quantity}</td>
+                    <td className="px-6 py-4 text-sm text-center text-slate-600 dark:text-slate-300">{i.unit}</td>
+                    <td className="px-6 py-4 text-sm text-right text-slate-800 dark:text-white">{currencySymbol} {i.rate.toFixed(2)}</td>
+                    <td className="px-6 py-4 text-sm text-right font-semibold text-sky-600 dark:text-sky-400">
+                      {currencySymbol} {i.amount.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleEditItem(idx)}
+                          className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteItem(idx)}
+                          className="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Total Summary */}
+          <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-slate-700 dark:to-slate-800 border-t border-slate-200 dark:border-slate-600 px-6 py-6">
+            <div className="flex justify-end items-center">
+              <div className="space-y-2 text-right">
+                <div className="flex justify-between gap-8">
+                  <span className="text-sm text-slate-600 dark:text-slate-300">Subtotal:</span>
+                  <span className="font-semibold text-slate-800 dark:text-white">{currencySymbol} {quotationItems.reduce((sum, i) => sum + i.amount, 0).toFixed(2)}</span>
+                </div>
+                <div className="pt-2 border-t-2 border-sky-200 dark:border-slate-600 flex justify-between gap-8">
+                  <span className="text-lg font-bold text-sky-600 dark:text-sky-400">Total:</span>
+                  <span className="text-2xl font-bold text-sky-600 dark:text-sky-400">{currencySymbol} {quotationItems.reduce((sum, i) => sum + i.amount, 0).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Buttons */}
-      <div className="flex flex-wrap gap-3 items-center mb-6">
+      {/* Save Quotation Section */}
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl border border-slate-200/80 dark:border-slate-700/70 p-6 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-800 dark:text-white">Save Quotation</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Store and manage your quotation</p>
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideRates}
+              onChange={(e) => setHideRates(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300 dark:border-slate-500"
+            />
+            <span className="text-sm text-slate-700 dark:text-slate-300 font-medium">Hide rates in PDF</span>
+          </label>
+        </div>
+
+        <button
+  onClick={() =>
+    handleExportPDF(
+      {
+        quotationNo: "Preview",
+        customer,
+        items: quotationItems,
+        currency,
+        preparedBy,
+        createdAt: Timestamp.now(),
+      },
+      true
+    )
+  }
+  disabled={quotationItems.length === 0}
+  className="w-full mb-3 bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg shadow font-semibold"
+>
+  👁 Preview PDF
+</button>
+
+        <div className="space-y-2 mb-3">
+          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">
+            Prepared By
+          </label>
+          <input
+            type="text"
+            value={preparedBy}
+            onChange={(e) => setPreparedBy(e.target.value)}
+            placeholder="Enter person name"
+            className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
+          />
+        </div>
+
         <button
           onClick={handleSaveQuotation}
           disabled={saving}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg shadow font-semibold"
+          className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 disabled:opacity-50 text-white px-6 py-4 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 font-semibold text-lg"
         >
           {saving
-            ? "Saving..."
+            ? "💾 Saving..."
             : editingQuotation
             ? "💾 Update Quotation"
             : "💾 Save Quotation"}
         </button>
-
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={hideRates}
-            onChange={(e) => setHideRates(e.target.checked)}
-          />
-          Hide rates in PDF
-        </label>
       </div>
 
       {/* Saved Quotations */}
-      <div className="mt-10">
-        <h3 className="text-lg font-semibold text-blue-700 mb-3">
-          🗂️ Saved Quotations
-        </h3>
+      <div className="space-y-4">
+        <h3 className="text-2xl font-bold text-slate-800 dark:text-white">🗂️ Saved Quotations</h3>
 
-        {quotations.length === 0 ? (
-          <p className="text-gray-500">No quotations saved yet.</p>
+        {loadingQuotations ? (
+          <SkeletonLoader rows={3} variant="card" />
+        ) : quotations.length === 0 ? (
+          <div className="text-center py-12 bg-slate-50 dark:bg-slate-800 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600">
+            <p className="text-slate-500 dark:text-slate-400 text-lg">📭 No quotations yet. Create your first quotation!</p>
+          </div>
         ) : (
-          quotations.map((q) => (
-            <div
-              key={q.id}
-              className="bg-white border rounded-lg shadow-sm p-4 mb-4"
-            >
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-bold text-blue-700">
-                  🧾 {q.quotationNo || "-"} — {q.customer}
-                </h4>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 text-sm">
-                    {q.createdAt
-                      ? q.createdAt.toDate().toLocaleDateString("en-IN")
-                      : ""}
-                  </span>
-                  <button
-                    onClick={() => handleEditQuotation(q)}
-                    className="text-yellow-600 hover:underline"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDeleteQuotation(q.id)}
-                    className="text-red-600 hover:underline"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => handleExportPDF(q)}
-                    className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-md text-sm shadow-sm"
-                  >
-                    📄 Export PDF
-                  </button>
-<button
-  onClick={() =>
-    navigate(`/invoice`, {
-      state: { quotation: q }   // pass full quotation object
-    })
-  }
-  className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded-md text-sm shadow-sm"
+          <div className="grid grid-cols-1 gap-3">
+            {quotations.map((q) => (
+              <div
+                key={q.id}
+                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl p-6 hover:shadow-lg transition-all duration-200"
+              >
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div className="flex-1">
+                    <h4 className="text-lg font-bold text-sky-600 dark:text-sky-400">
+                      🧾 {q.quotationNo || "-"}
+                    </h4>
+                    <p className="text-slate-700 dark:text-slate-300 mt-1">
+                      <span className="font-semibold">Client:</span> {q.customer}
+                    </p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                      {q.createdAt
+                        ? q.createdAt.toDate().toLocaleDateString("en-IN")
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-start md:justify-end">
+                    <button
+  onClick={() => {
+    setQuotationItems(q.items);
+    setCustomer(q.customer);
+    setPreparedBy(q.preparedBy || loggedUser);
+    setEditingQuotation(q);   // ✅ THIS makes it edit mode
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }}
+  className="bg-slate-500 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
 >
-  🔄 Convert to Invoice
+  📂 Open
 </button>
 
+                    <button
+  onClick={() => handleExportPDF(q, true)}
+  className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
+>
+  👁 Preview
+</button>
+
+<button
+  onClick={() => handleExportPDF(q)}
+  className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
+>
+  ⬇ Download
+</button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm("Delete this quotation?")) {
+                          deleteDoc(doc(db, "quotations", q.id));
+                        }
+                      }}
+                      className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
                 </div>
-                </div>
-
-              
-
-              <table className="w-full border-collapse text-sm mb-2">
-                <thead>
-                  <tr className="bg-blue-50">
-                    <th className="p-2">Item</th>
-                    <th className="p-2">Unit</th>
-                    <th className="p-2">Qty</th>
-                    <th className="p-2">Rate</th>
-                    <th className="p-2">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {q.items.map((item, i) => (
-                    <tr key={i} className="border-b">
-                      <td className="p-2">{item.name}</td>
-                      <td className="p-2">{item.unit}</td>
-                      <td className="p-2">{item.quantity}</td>
-                      <td className="p-2">{item.rate}</td>
-                      <td className="p-2">{item.amount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <div className="font-semibold text-blue-700">
-                Total: ₹ {q.total?.toFixed(2)}
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>
   );
 }
+

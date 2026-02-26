@@ -9,12 +9,17 @@ import {
   onSnapshot,
   getDoc,
   Timestamp,
+  query,
+  where,
+  getDocs,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
 import { clearCompanyInfoCache, getCompanyInfo } from "../config/companyInfo";
 import { useUnits } from "../hooks/useUnits";
 import { useSearchParams, useLocation } from "react-router-dom";
+import { useCurrency } from "../context/CurrencyContext";
+import { addStockMovement } from "../services/stockService";
 
 import {
   formatCurrency,
@@ -29,6 +34,7 @@ import { renderInvoiceHtml } from "./invoice/InvoicePrint";
 
 export default function InvoicePage() {
   const units = useUnits();
+  const { currency } = useCurrency();
 
   // company config loaded from Firestore
   const [companyInfo, setCompanyInfo] = useState({});
@@ -67,6 +73,16 @@ export default function InvoicePage() {
   const [saving, setSaving] = useState(false);
   const [showQr, setShowQr] = useState(true);
 
+  // ---- Wood CFT Modal ----
+const [showWoodModal, setShowWoodModal] = useState(false);
+
+const [woodName, setWoodName] = useState("");
+const [woodLength, setWoodLength] = useState("");   // ft
+const [woodWidth, setWoodWidth] = useState("");     // inch
+const [woodThickness, setWoodThickness] = useState(""); // inch
+const [woodQty, setWoodQty] = useState("");
+
+
 
   // ------------------ load company + items + invoices ------------------
   useEffect(() => {
@@ -80,20 +96,26 @@ export default function InvoicePage() {
       setCompanyInfo(info || {});
       setCompanyUpi(info?.activeUpi || null);
 
-      // live items listener
-      unsubItems = onSnapshot(collection(db, "items"), (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setSavedItems(list);
-      });
+      // live items listener (currency-filtered)
+      unsubItems = onSnapshot(
+        query(collection(db, "items"), where("currency", "==", currency)),
+        (snap) => {
+          const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setSavedItems(list);
+        }
+      );
 
-      // live invoices listener (newest first)
-      unsubInvoices = onSnapshot(collection(db, "invoices"), (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        list.sort((a, b) =>
-          (a.createdAt?.seconds || 0) < (b.createdAt?.seconds || 0) ? 1 : -1
-        );
-        setSavedInvoices(list);
-      });
+      // live invoices listener (currency-filtered, newest first)
+      unsubInvoices = onSnapshot(
+        query(collection(db, "invoices"), where("currency", "==", currency)),
+        (snap) => {
+          const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          list.sort((a, b) =>
+            (a.createdAt?.seconds || 0) < (b.createdAt?.seconds || 0) ? 1 : -1
+          );
+          setSavedInvoices(list);
+        }
+      );
 
       // load local terms fallback
       const localTerms = localStorage.getItem("invoice_terms");
@@ -105,7 +127,7 @@ export default function InvoicePage() {
       if (unsubItems) unsubItems();
       if (unsubInvoices) unsubInvoices();
     };
-  }, []);
+  }, [currency]);
 
   // If active company or companyUpi changes the UI can react (debug optional)
   useEffect(() => {
@@ -130,6 +152,10 @@ export default function InvoicePage() {
             setRows(
               q.items.map((it) => ({
                 item: it.name,
+                itemId:
+                  savedItems.find(
+                    (s) => s.name?.toLowerCase() === it.name?.toLowerCase()
+                  )?.id || null,
                 quantity: Number(it.quantity || 0),
                 unit: it.unit,
                 rate: Number(it.rate || 0),
@@ -154,6 +180,10 @@ export default function InvoicePage() {
     if (Array.isArray(q.items)) {
       const formattedItems = q.items.map((item) => ({
         item: item.name,
+        itemId:
+          savedItems.find(
+            (s) => s.name?.toLowerCase() === item.name?.toLowerCase()
+          )?.id || null,
         quantity: Number(item.quantity),
         unit: item.unit,
         rate: Number(item.rate),
@@ -161,7 +191,7 @@ export default function InvoicePage() {
       }));
       setRows(formattedItems);
     }
-  }, [location.state]);
+  }, [location.state, savedItems]);
 
   // totals (memoized)
   const totals = useMemo(() => calcTotals(rows, discountType, discountValue), [
@@ -206,6 +236,9 @@ export default function InvoicePage() {
 
     const newRow = {
       item: item.trim(),
+      itemId: savedItems.find(
+        (it) => it.name?.toLowerCase() === item.trim().toLowerCase()
+      )?.id || null,
       quantity: q,
       unit,
       rate: r,
@@ -243,6 +276,21 @@ export default function InvoicePage() {
     setRows((old) => old.filter((_, idx) => idx !== i));
   }
 
+  async function removeOldInvoiceStockMovements(invoiceId) {
+    const q = query(
+      collection(db, "stockMovements"),
+      where("referenceType", "==", "INVOICE"),
+      where("referenceId", "==", invoiceId)
+    );
+
+    const snapshot = await getDocs(q);
+
+    for (const docSnap of snapshot.docs) {
+      await deleteDoc(doc(db, "stockMovements", docSnap.id));
+    }
+  }
+
+
   /* ---------------------- Save Invoice ---------------------- */
   async function saveInvoice() {
     if (!customerName.trim()) return alert("Enter customer name");
@@ -250,24 +298,79 @@ export default function InvoicePage() {
 
     setSaving(true);
     try {
+      const materialRows = rows.filter((r) => r.itemId);
+
+      const movementQuery = query(
+        collection(db, "stockMovements"),
+        where("currency", "==", currency)
+      );
+      const movementSnapshot = await getDocs(movementQuery);
+      const stockMap = {};
+      movementSnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (!data?.itemId) return;
+        if (!stockMap[data.itemId]) stockMap[data.itemId] = 0;
+        if (data.type === "IN") stockMap[data.itemId] += Number(data.quantity);
+        if (data.type === "OUT") stockMap[data.itemId] -= Number(data.quantity);
+      });
+
+      // For edits, add back this invoice's existing OUT quantities before validating.
+      const currentInvoiceUsageMap = {};
+      if (loadedInvoiceId) {
+        const currentInvoiceMovementsQuery = query(
+          collection(db, "stockMovements"),
+          where("referenceType", "==", "INVOICE"),
+          where("referenceId", "==", loadedInvoiceId)
+        );
+        const currentInvoiceMovementsSnapshot = await getDocs(
+          currentInvoiceMovementsQuery
+        );
+        currentInvoiceMovementsSnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (!data?.itemId || data.type !== "OUT") return;
+          currentInvoiceUsageMap[data.itemId] =
+            (currentInvoiceUsageMap[data.itemId] || 0) + Number(data.quantity || 0);
+        });
+      }
+
+      let insufficient = false;
+      materialRows.forEach((row) => {
+        const currentStock = stockMap[row.itemId] || 0;
+        const currentInvoiceQty = currentInvoiceUsageMap[row.itemId] || 0;
+        const availableForThisSave = currentStock + currentInvoiceQty;
+        if (Number(row.quantity) > availableForThisSave) insufficient = true;
+      });
+
+      if (insufficient) {
+        const proceed = window.confirm(
+          "Some items exceed available stock. Continue anyway?"
+        );
+        if (!proceed) {
+          setSaving(false);
+          return;
+        }
+      }
+
       const payload = {
-  customerName,
-  customerAddress,
-  invoiceDate: new Date(invoiceDate),
-  items: rows,
-  subtotal: totals.subtotal,
-  discountValue: Number(discountValue || 0),
-  discountType,
-  totalAmount: totals.total,
-  terms,
-  invoiceTitle,
-  amountReceived: Number(amountReceived || 0),
-};
+        customerName,
+        customerAddress,
+        invoiceDate: new Date(invoiceDate),
+        items: rows,
+        subtotal: totals.subtotal,
+        discountValue: Number(discountValue || 0),
+        discountType,
+        totalAmount: totals.total,
+        terms,
+        invoiceTitle,
+        amountReceived: Number(amountReceived || 0),
+        currency,
+      };
 
-
+      let invoiceId;
       if (loadedInvoiceId) {
         payload.updatedAt = Timestamp.now();
         await updateDoc(doc(db, "invoices", loadedInvoiceId), payload);
+        invoiceId = loadedInvoiceId;
         alert("Invoice updated");
       } else {
         const invNo = await getNextInvoiceNumber();
@@ -276,14 +379,32 @@ export default function InvoicePage() {
 
         const ref = await addDoc(collection(db, "invoices"), payload);
         setLoadedInvoiceId(ref.id);
+        invoiceId = ref.id;
         alert(`Invoice ${invNo} saved`);
       }
 
-      // save terms locally
+      // If updating existing invoice, remove previous stock entries first
+      if (loadedInvoiceId) {
+        await removeOldInvoiceStockMovements(loadedInvoiceId);
+      }
+
+      for (const row of materialRows) {
+        await addStockMovement({
+          itemId: row.itemId,
+          itemName: row.item,
+          type: "OUT",
+          quantity: row.quantity,
+          referenceType: "INVOICE",
+          referenceId: invoiceId,
+          currency,
+          date: invoiceDate,
+        });
+      }
+
       localStorage.setItem("invoice_terms", terms || "");
     } catch (err) {
       console.error("Save invoice error:", err);
-      alert("❌ Save failed");
+      alert("Save failed");
     } finally {
       setSaving(false);
     }
@@ -322,20 +443,37 @@ export default function InvoicePage() {
   }
 
   /* ---------------------- Delete Invoice ---------------------- */
-  async function deleteInvoice(inv) {
-    if (!window.confirm(`Delete invoice ${inv.invoiceNumber}?`)) return;
+  async function deleteInvoice(invoiceId) {
+    const confirmDelete = window.confirm("Delete this invoice?");
+    if (!confirmDelete) return;
 
-    await deleteDoc(doc(db, "invoices", inv.id));
+    try {
+      const q = query(
+        collection(db, "stockMovements"),
+        where("referenceType", "==", "INVOICE"),
+        where("referenceId", "==", invoiceId)
+      );
+      const snapshot = await getDocs(q);
 
-    if (loadedInvoiceId === inv.id) {
-      newInvoice();
+      for (const docSnap of snapshot.docs) {
+        await deleteDoc(doc(db, "stockMovements", docSnap.id));
+      }
+
+      await deleteDoc(doc(db, "invoices", invoiceId));
+
+      if (loadedInvoiceId === invoiceId) {
+        resetInvoiceForm();
+      }
+
+      alert("Invoice deleted successfully");
+    } catch (error) {
+      console.error(error);
+      alert("Delete failed");
     }
   }
 
   /* ---------------------- Start New Invoice (reset) ---------------------- */
-  function newInvoice() {
-    if (!window.confirm("Start new invoice? Unsaved changes will be lost.")) return;
-
+  function resetInvoiceForm() {
     setLoadedInvoiceId(null);
     setCustomerName("");
     setCustomerAddress("");
@@ -345,6 +483,11 @@ export default function InvoicePage() {
     setDiscountType("amount");
     setEditingIndex(null);
     setForm({ item: "", quantity: "", unit: "", rate: "" });
+  }
+
+  function newInvoice() {
+    if (!window.confirm("Start new invoice? Unsaved changes will be lost.")) return;
+    resetInvoiceForm();
   }
 
   /* ---------------------- Print Preview ---------------------- */
@@ -438,11 +581,11 @@ function openPrintView(inv = null, autoPrint = false) {
 
   /* ---------------------- UI (return) ---------------------- */
   return (
-    <div className="p-8 min-h-screen bg-gray-50">
+    <div className="space-y-6">
       {/* Document Title input */}
       <div className="mb-3">
         <input
-          className="p-3 border rounded w-full md:w-64 font-semibold text-lg"
+          className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl w-full md:w-80 font-bold text-lg bg-white/80 dark:bg-slate-900/70 shadow-sm"
           placeholder="Document Title (e.g., Invoice, Cash Memo, Labour Bill)"
           value={invoiceTitle}
           onChange={(e) => setInvoiceTitle(e.target.value)}
@@ -450,7 +593,7 @@ function openPrintView(inv = null, autoPrint = false) {
       </div>
 
       {/* Header / Company Info (C4 card) */}
-      <div className="bg-white rounded-2xl p-6 mb-6 shadow border border-gray-200">
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl p-6 mb-6 shadow-lg border border-slate-200/80 dark:border-slate-700/70">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-2xl font-bold text-slate-800 mb-1">{companyInfo?.name}</h2>
@@ -473,22 +616,22 @@ function openPrintView(inv = null, autoPrint = false) {
       </div>
 
       {/* Editor card (C4) */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4">
+      <div className="bg-white/90 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-700/70 rounded-2xl p-5 mb-4 shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <input
-            className="p-3 border rounded"
+            className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900/70"
             placeholder="Customer name"
             value={customerName}
             onChange={(e) => setCustomerName(e.target.value)}
           />
           <input
-            className="p-3 border rounded"
+            className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900/70"
             placeholder="Customer address"
             value={customerAddress}
             onChange={(e) => setCustomerAddress(e.target.value)}
           />
           <input
-            className="p-3 border rounded"
+            className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900/70"
             type="date"
             value={invoiceDate}
             onChange={(e) => setInvoiceDate(e.target.value)}
@@ -497,14 +640,14 @@ function openPrintView(inv = null, autoPrint = false) {
       </div>
 
       {/* Add item row */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-center mb-4">
+      <div className="bg-white/90 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-700/70 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-5 gap-3 items-center mb-4 shadow-sm">
         <input
           list="itemList"
           name="item"
           value={form.item}
           onChange={handleChange}
           placeholder="Type or select item name"
-          className="p-3 border rounded md:col-span-2"
+          className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl md:col-span-2 bg-white dark:bg-slate-900/70"
         />
         <datalist id="itemList">
           {savedItems.map((it, index) => (
@@ -517,14 +660,14 @@ function openPrintView(inv = null, autoPrint = false) {
           value={form.quantity}
           onChange={handleChange}
           placeholder="Quantity"
-          className="p-3 border rounded"
+          className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900/70"
         />
 
         <select
           name="unit"
           value={form.unit}
           onChange={handleChange}
-          className="p-3 border rounded w-full"
+          className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl w-full bg-white dark:bg-slate-900/70"
         >
           <option value="">Select Unit</option>
           {units.map((u, i) => <option key={i} value={u}>{u}</option>)}
@@ -536,13 +679,13 @@ function openPrintView(inv = null, autoPrint = false) {
           value={form.rate}
           onChange={handleChange}
           placeholder="Rate"
-          className="p-3 border rounded"
+          className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900/70"
         />
 
         <div className="md:col-span-5 text-right">
           <button
             onClick={addOrUpdateRow}
-            className="bg-green-600 text-white px-5 py-3 rounded shadow mt-3"
+            className="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white px-5 py-3 rounded-xl shadow-lg mt-3 font-semibold transition-all"
           >
             {editingIndex !== null ? "Update" : "➕ Add"}
           </button>
@@ -550,9 +693,9 @@ function openPrintView(inv = null, autoPrint = false) {
       </div>
 
       {/* Items table */}
-      <div className="bg-white rounded-lg shadow overflow-x-auto border border-gray-200">
+      <div className="bg-white/90 dark:bg-slate-900/75 rounded-2xl shadow-lg overflow-x-auto border border-slate-200/80 dark:border-slate-700/70">
         <table className="w-full">
-          <thead className="bg-sky-600 text-white">
+          <thead className="bg-gradient-to-r from-sky-600 to-indigo-600 text-white">
             <tr>
               <th className="p-3 text-left">#</th>
               <th className="p-3 text-left">Item</th>
@@ -565,7 +708,7 @@ function openPrintView(inv = null, autoPrint = false) {
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={i} className="border-t">
+              <tr key={i} className="border-t border-slate-200 dark:border-slate-700 hover:bg-slate-50/70 dark:hover:bg-slate-800/70">
                 <td className="p-3">{i + 1}</td>
                 <td className="p-3">{r.item}</td>
                 <td className="p-3 text-right">{r.quantity}</td>
@@ -573,8 +716,8 @@ function openPrintView(inv = null, autoPrint = false) {
                 <td className="p-3 text-right">{formatCurrency(r.rate)}</td>
                 <td className="p-3 text-right font-semibold">{formatCurrency(r.amount)}</td>
                 <td className="p-3 text-center">
-                  <button onClick={() => editRow(i)} className="bg-yellow-400 px-2 py-1 rounded mr-2">✏️</button>
-                  <button onClick={() => deleteRow(i)} className="bg-red-500 px-2 py-1 rounded text-white">🗑️</button>
+                  <button onClick={() => editRow(i)} className="bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1.5 rounded-lg mr-2 transition-all">✏️</button>
+                  <button onClick={() => deleteRow(i)} className="bg-red-500 hover:bg-red-600 px-2.5 py-1.5 rounded-lg text-white transition-all">🗑️</button>
                 </td>
               </tr>
             ))}
@@ -583,14 +726,14 @@ function openPrintView(inv = null, autoPrint = false) {
       </div>
 
       {/* Discount & Terms */}
-      <div className="mt-4 flex flex-col md:flex-row gap-4 items-start">
+      <div className="mt-4 bg-white/90 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-700/70 rounded-2xl p-5 flex flex-col md:flex-row gap-4 items-start shadow-sm">
         <div className="flex items-center gap-3">
           <select
             value={discountType}
             onChange={(e) => setDiscountType(e.target.value)}
-            className="p-3 border rounded"
+            className="p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900/70"
           >
-            <option value="amount">Discount (₹)</option>
+            <option value="amount">Discount</option>
             <option value="percent">Discount (%)</option>
           </select>
 
@@ -620,27 +763,27 @@ function openPrintView(inv = null, autoPrint = false) {
           <textarea
             value={terms}
             onChange={(e) => setTerms(e.target.value)}
-            className="mt-1 p-3 border rounded w-full"
+            className="mt-1 p-3.5 border border-slate-200 dark:border-slate-700 rounded-xl w-full bg-white dark:bg-slate-900/70"
             rows={3}
           />
           <div className="mt-2">
-            <button onClick={saveTermsLocally} className="bg-indigo-600 text-white px-4 py-2 rounded">Save Terms</button>
+            <button onClick={saveTermsLocally} className="bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white px-4 py-2.5 rounded-xl font-semibold shadow">Save Terms</button>
           </div>
         </div>
       </div>
 
       {/* Summary (B3 box) */}
       <div className="mt-6 flex items-start justify-end gap-4">
-        <div className="bg-white border border-gray-200 rounded-xl p-4 w-72 text-right">
-          <div className="flex justify-between"><span>Subtotal</span><span>₹ {formatCurrency(totals.subtotal)}</span></div>
-          <div className="flex justify-between mt-2"><span>Discount</span><span>₹ {formatCurrency(totals.discount)}</span></div>
-          <div className="border-t mt-3 pt-2 flex justify-between font-semibold text-lg"><span>Total</span><span>₹ {formatCurrency(totals.total)}</span></div>
+        <div className="bg-white/90 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-700/70 rounded-2xl p-5 w-80 text-right shadow-sm">
+          <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(totals.subtotal, currency)}</span></div>
+          <div className="flex justify-between mt-2"><span>Discount</span><span>{formatCurrency(totals.discount, currency)}</span></div>
+          <div className="border-t mt-3 pt-2 flex justify-between font-semibold text-lg"><span>Total</span><span>{formatCurrency(totals.total, currency)}</span></div>
         <div className="flex justify-between mt-2">
   <span>Amount Received</span>
   <input
     type="number"
     min="0"
-    className="border p-1 w-32 text-right rounded"
+    className="border border-slate-200 dark:border-slate-700 p-2 w-32 text-right rounded-lg bg-white dark:bg-slate-900/70"
     placeholder="0.00"
     value={amountReceived}
     onChange={(e) => setAmountReceived(e.target.value)}
@@ -650,7 +793,7 @@ function openPrintView(inv = null, autoPrint = false) {
 {amountReceived > 0 && (
   <div className="flex justify-between mt-2 font-semibold text-red-700">
     <span>Balance Due</span>
-    <span>₹ {(totals.total - Number(amountReceived)).toLocaleString("en-IN")}</span>
+    <span>{formatCurrency(totals.total - Number(amountReceived), currency)}</span>
   </div>
 )}
 
@@ -659,36 +802,36 @@ function openPrintView(inv = null, autoPrint = false) {
 
       {/* Actions */}
       <div className="mt-4 flex flex-wrap gap-3 items-center">
-        <button onClick={newInvoice} className="bg-gray-800 text-white px-4 py-2 rounded">＋ New Invoice</button>
+        <button onClick={newInvoice} className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl font-semibold transition-all">＋ New Invoice</button>
 
-        <button onClick={saveInvoice} disabled={saving} className="bg-blue-600 text-white px-5 py-3 rounded">💾 Save Invoice</button>
+        <button onClick={saveInvoice} disabled={saving} className="bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white px-5 py-3 rounded-xl font-semibold shadow-lg transition-all">💾 Save Invoice</button>
 
-        <button onClick={() => openPrintView(null)} className="bg-gray-700 text-white px-5 py-3 rounded">👁️ Preview</button>
+        <button onClick={() => openPrintView(null)} className="bg-slate-700 hover:bg-slate-800 text-white px-5 py-3 rounded-xl font-semibold transition-all">👁️ Preview</button>
 
-        <button onClick={() => openPrintView(null, true)} className="bg-gray-600 text-white px-5 py-3 rounded">🖨 Print</button>
+        <button onClick={() => openPrintView(null, true)} className="bg-slate-600 hover:bg-slate-700 text-white px-5 py-3 rounded-xl font-semibold transition-all">🖨 Print</button>
 
-        <button onClick={exportCurrentPdf} className="bg-green-600 text-white px-5 py-3 rounded">📄 Export PDF</button>
+        <button onClick={exportCurrentPdf} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-xl font-semibold transition-all">📄 Export PDF</button>
 
         {loadedInvoiceId && (
-          <button onClick={() => deleteInvoice(savedInvoices.find((s) => s.id === loadedInvoiceId))} className="bg-red-600 text-white px-4 py-2 rounded ml-2">🗑️ Delete Invoice</button>
+          <button onClick={() => deleteInvoice(loadedInvoiceId)} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2.5 rounded-xl ml-2 font-semibold transition-all">🗑️ Delete Invoice</button>
         )}
       </div>
 
       {/* Saved invoices list */}
-      <div className="mt-10">
+      <div className="mt-10 bg-white/90 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-700/70 rounded-2xl p-5">
         <h3 className="text-lg font-semibold text-slate-800 mb-3">Saved Invoices</h3>
         {savedInvoices.length === 0 ? (
           <p className="text-gray-500">No invoices yet</p>
         ) : (
           savedInvoices.map((inv) => (
-            <div key={inv.id} className="bg-white border rounded p-4 mb-3 flex justify-between items-center">
+            <div key={inv.id} className="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-700 rounded-xl p-4 mb-3 flex justify-between items-center hover:shadow-md transition-all">
               <div>
                 <div className="font-semibold">{inv.invoiceNumber}</div>
-                <div className="text-sm text-gray-600">{inv.customerName} • ₹ {formatCurrency(inv.totalAmount)}</div>
+                <div className="text-sm text-gray-600">{inv.customerName} • {formatCurrency(inv.totalAmount, inv.currency || currency)}</div>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => loadInvoice(inv)} className="bg-blue-500 text-white px-3 py-1 rounded">Open</button>
-                <button onClick={() => openPrintView(inv)} className="bg-gray-700 text-white px-3 py-1 rounded">Print</button>
+                <button onClick={() => loadInvoice(inv)} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all">Open</button>
+                <button onClick={() => openPrintView(inv)} className="bg-slate-600 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all">Print</button>
 <button
   onClick={() =>
     exportPdf({
@@ -699,11 +842,11 @@ function openPrintView(inv = null, autoPrint = false) {
       amountReceived: inv.amountReceived || 0,
     })
   }
-  className="bg-green-600 text-white px-3 py-1 rounded"
+  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
 >
   PDF
 </button>
-                <button onClick={() => deleteInvoice(inv)} className="bg-red-500 text-white px-3 py-1 rounded">Delete</button>
+                <button onClick={() => deleteInvoice(inv.id)} className="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all">Delete</button>
               </div>
             </div>
           ))
@@ -712,3 +855,5 @@ function openPrintView(inv = null, autoPrint = false) {
     </div>
   );
 }
+
+
