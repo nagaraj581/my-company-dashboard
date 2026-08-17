@@ -1,15 +1,10 @@
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase";
-import { onSnapshot } from "firebase/firestore";
+import { addDoc, getDocs, deleteDoc, updateDoc, onSnapshot, query, where } from "firebase/firestore";
 import { getCompanyInfo } from "../config/companyInfo";
 import { SkeletonLoader } from "../components/SkeletonLoader";
-import {
-  query,
-  where,
-} from "firebase/firestore";
 import { useCurrency } from "../context/CurrencyContext";
+import { getCurrentUserId, userCollection, userDoc } from "../services/userDb";
 
 const DEFAULT_UNITS = ["Nos"];
 
@@ -29,8 +24,15 @@ export default function Items() {
 
   // Load items and units
 useEffect(() => {
+  const userId = getCurrentUserId();
+  if (!userId) {
+    setItems([]);
+    setLoadingItems(false);
+    return undefined;
+  }
+
   const q = query(
-    collection(db, "items"),
+    userCollection("items", userId),
     where("currency", "==", currency)
   );
   const unsub = onSnapshot(q, (snapshot) => {
@@ -64,7 +66,13 @@ useEffect(() => {
   useEffect(() => localStorage.setItem("items", JSON.stringify(items)), [items]);
 // 🔹 Load units in real-time from Firestore
 useEffect(() => {
-  const unsub = onSnapshot(collection(db, "units"), (snapshot) => {
+  const userId = getCurrentUserId();
+  if (!userId) {
+    setUnits(DEFAULT_UNITS);
+    return undefined;
+  }
+
+  const unsub = onSnapshot(userCollection("units", userId), (snapshot) => {
     const firestoreUnits = snapshot.docs.map((doc) => doc.data().name);
     setUnits([...new Set([...DEFAULT_UNITS, ...firestoreUnits])]);
   });
@@ -88,6 +96,8 @@ useEffect(() => {
 
 const handleAdd = async () => {
   if (!form.name.trim()) return alert("Item name is required");
+  const userId = getCurrentUserId();
+  if (!userId) return alert("You must be signed in");
 
   const newItem = {
     name: form.name,
@@ -97,16 +107,9 @@ const handleAdd = async () => {
     currency,
   };
 
-  const docRef = await addDoc(collection(db, "items"), newItem);
+  const docRef = await addDoc(userCollection("items", userId), newItem);
   setItems([...items, { id: docRef.id, ...newItem }]);
   setForm({ name: "", unit: "", rate: "", category: "" });
-};
-
-const handleDelete = async (id) => {
-  if (window.confirm("Are you sure you want to delete this item?")) {
-    await deleteDoc(doc(db, "items", id));
-    setItems(items.filter((i) => i.id !== id));
-  }
 };
 
 // 🔹 Add new unit
@@ -114,9 +117,11 @@ const handleAddUnit = async () => {
   const trimmed = newUnit.trim().toLowerCase();
   if (!trimmed) return alert("Please enter a valid unit");
   if (units.includes(trimmed)) return alert("Unit already exists");
+  const userId = getCurrentUserId();
+  if (!userId) return alert("You must be signed in");
 
   try {
-    await addDoc(collection(db, "units"), { name: trimmed });
+    await addDoc(userCollection("units", userId), { name: trimmed });
     setNewUnit("");
     alert(`✅ Unit "${trimmed}" added successfully!`);
   } catch (err) {
@@ -126,11 +131,21 @@ const handleAddUnit = async () => {
 };
 // 🔹 Clean up unused unit (auto-remove when no items use it)
 const cleanupUnusedUnits = async (unitName) => {
-  const itemsSnapshot = await getDocs(query(collection(db, "items"), where("unit", "==", unitName)));
+  const userId = getCurrentUserId();
+  if (!userId) return;
+
+  const itemsSnapshot = await getDocs(
+    query(
+      userCollection("items", userId),
+      where("unit", "==", unitName)
+    )
+  );
   if (itemsSnapshot.empty) {
-    const unitsSnapshot = await getDocs(query(collection(db, "units"), where("name", "==", unitName)));
+    const unitsSnapshot = await getDocs(
+      query(userCollection("units", userId), where("name", "==", unitName))
+    );
     if (!unitsSnapshot.empty) {
-      await deleteDoc(doc(db, "units", unitsSnapshot.docs[0].id));
+      await deleteDoc(userDoc("units", unitsSnapshot.docs[0].id, userId));
       console.log(`🧹 Cleaned up unused unit: ${unitName}`);
     }
   }
@@ -140,7 +155,7 @@ const cleanupUnusedUnits = async (unitName) => {
 const handleDeleteItem = async (itemId, itemUnit) => {
   if (!window.confirm("Are you sure you want to delete this item?")) return;
   try {
-    await deleteDoc(doc(db, "items", itemId));
+    await deleteDoc(userDoc("items", itemId));
     await cleanupUnusedUnits(itemUnit);
     alert("🗑️ Item deleted successfully!");
   } catch (err) {
@@ -153,7 +168,7 @@ const handleDeleteItem = async (itemId, itemUnit) => {
   const handleEditChange = (e) =>
     setEditingItem({ ...editingItem, [e.target.name]: e.target.value });
 const handleSaveEdit = async () => {
-  const ref = doc(db, "items", editingItem.id);
+  const ref = userDoc("items", editingItem.id);
   await updateDoc(ref, {
     name: editingItem.name,
     unit: editingItem.unit,
@@ -168,6 +183,8 @@ const handleSaveEdit = async () => {
 const handleFileUpload = (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  const userId = getCurrentUserId();
+  if (!userId) return alert("You must be signed in");
 
   const reader = new FileReader();
   reader.onload = async (evt) => {
@@ -182,12 +199,13 @@ const handleFileUpload = (e) => {
       unit: row.unit?.toString().trim() || "",
       rate: row.rate?.toString().trim() || "",
       category: row.category?.toString().trim() || "",
+      currency,
     }));
 
     // ✅ Add all items to Firestore
     const addedItems = await Promise.all(
       formatted.map(async (item) => {
-        const docRef = await addDoc(collection(db, "items"), item);
+        const docRef = await addDoc(userCollection("items", userId), item);
         return { id: docRef.id, ...item };
       })
     );
@@ -407,7 +425,7 @@ const handleExport = () => {
                           ✏️ Edit
                         </button>
                         <button
-                          onClick={() => handleDelete(i.id)}
+                          onClick={() => handleDeleteItem(i.id, i.unit)}
                           className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
                         >
                           🗑️ Delete
@@ -482,4 +500,3 @@ const handleExport = () => {
     </div>
   );
 }
-

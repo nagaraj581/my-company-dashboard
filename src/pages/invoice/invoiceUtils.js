@@ -1,8 +1,8 @@
 // helpers for Invoice module
 // place at: src/pages/invoice/invoiceUtils.js
 
-import { collection, getDocs, query, orderBy, limit } from "firebase/firestore";
-import { db } from "../../firebase";
+import { getDocs, query, orderBy, limit } from "firebase/firestore";
+import { userCollection } from "../../services/userDb";
 
 export function getCurrencySymbol(currency) {
   if (currency === "AED") return "AED";
@@ -68,7 +68,11 @@ export function amountToWords(amount) {
 export async function getNextInvoiceNumber() {
   try {
     const year = new Date().getFullYear();
-    const q = query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(1));
+    const q = query(
+      userCollection("invoices"),
+      orderBy("createdAt", "desc"),
+      limit(1)
+    );
     const snap = await getDocs(q);
     if (snap.empty) {
       return `INV-${year}-001`;

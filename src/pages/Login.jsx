@@ -3,7 +3,7 @@ import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "fire
 import { auth } from "../firebase";
 import companyInfo from "../config/companyInfo";
 
-export default function Login({ onLogin }) {
+export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 

@@ -7,8 +7,9 @@ import {
   parseInvoiceDate,
   calcTotals,
 } from "./invoiceUtils";
+import { getDocumentStyle, getDocumentStyleId } from "../../config/documentStyles";
 
-function getCurrencySymbol(currency) {
+function GET_CURRENCY_SYMBOL(currency) {
   return currency === "AED" ? "AED" : "Rs";
 }
 
@@ -33,6 +34,7 @@ export async function exportPdf(invoice) {
   const doc = new jsPDF("p", "pt", "a4");
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
+  const docStyle = getDocumentStyle(getDocumentStyleId(invoice));
 
   const left = 40;
   const right = 40;
@@ -42,7 +44,7 @@ export async function exportPdf(invoice) {
   doc.setFontSize(28);
   doc.text(invoice.invoiceTitle || "INVOICE", left, 60);
 
-  doc.setDrawColor(30, 80, 130);
+  doc.setDrawColor(...docStyle.primary);
   doc.setLineWidth(1);
   doc.line(left, 75, pageWidth - right, 75);
 
@@ -111,7 +113,7 @@ export async function exportPdf(invoice) {
     ]),
     theme: "grid",
     headStyles: {
-      fillColor: [30, 80, 130],
+      fillColor: docStyle.primary,
       textColor: 255,
       fontStyle: "bold",
     },
@@ -120,7 +122,7 @@ export async function exportPdf(invoice) {
       fontSize: 10,
     },
     alternateRowStyles: {
-      fillColor: [245, 245, 245],
+      fillColor: docStyle.tableStripe,
     },
     columnStyles: {
       2: { halign: "right" },
@@ -294,6 +296,6 @@ doc.text(
   );
 
   /* ---------------- SAVE ---------------- */
-  const safeName = String(invoiceNumber).replace(/[^\w\-]/g, "_");
+  const safeName = String(invoiceNumber).replace(/[^\w-]/g, "_");
   doc.save(`${safeName}.pdf`);
 }

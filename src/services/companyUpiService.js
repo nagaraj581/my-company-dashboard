@@ -1,8 +1,5 @@
 // src/services/companyUpiService.js
-import { db } from "../firebase";
 import {
-  collection,
-  doc,
   getDocs,
   addDoc,
   setDoc,
@@ -13,13 +10,14 @@ import {
   serverTimestamp,
   getDoc,
 } from "firebase/firestore";
+import { userDoc, userSubcollection, userSubdoc } from "./userDb";
 
 /**
  * Manage UPI entries under companies/{companyId}/upis
  */
 
 function upisCol(companyId) {
-  return collection(db, "companies", companyId, "upis");
+  return userSubcollection("companies", companyId, "upis");
 }
 
 export async function getUpis(companyId) {
@@ -31,7 +29,7 @@ export async function getUpis(companyId) {
 
 export async function getUpi(companyId, upiId) {
   if (!companyId || !upiId) return null;
-  const ref = doc(db, "companies", companyId, "upis", upiId);
+  const ref = userSubdoc("companies", companyId, "upis", upiId);
   const snap = await getDoc(ref);
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
@@ -49,17 +47,17 @@ export async function addUpi(companyId, payload) {
 
 export async function updateUpi(companyId, upiDocId, payload) {
   if (!companyId || !upiDocId) throw new Error("companyId & upiDocId required");
-  const ref = doc(db, "companies", companyId, "upis", upiDocId);
+  const ref = userSubdoc("companies", companyId, "upis", upiDocId);
   await updateDoc(ref, { ...payload, updatedAt: serverTimestamp() });
 }
 
 export async function deleteUpi(companyId, upiDocId) {
   if (!companyId || !upiDocId) throw new Error("companyId & upiDocId required");
-  await deleteDoc(doc(db, "companies", companyId, "upis", upiDocId));
+  await deleteDoc(userSubdoc("companies", companyId, "upis", upiDocId));
 }
 
 // set company default upi id in company doc
 export async function setCompanyDefaultUpi(companyId, upiDocId) {
-  const ref = doc(db, "companies", companyId);
+  const ref = userDoc("companies", companyId);
   await setDoc(ref, { defaultUpiId: upiDocId }, { merge: true });
 }

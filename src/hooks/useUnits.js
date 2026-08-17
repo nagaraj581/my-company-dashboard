@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase";
+import { onSnapshot } from "firebase/firestore";
+import { getCurrentUserId, userCollection } from "../services/userDb";
 
 export function useUnits() {
   const defaultUnits = ["pcs", "kg", "litre", "box", "meter", "bundle"];
   const [units, setUnits] = useState(defaultUnits);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "units"), (snapshot) => {
+    const userId = getCurrentUserId();
+    if (!userId) {
+      setUnits(defaultUnits);
+      return undefined;
+    }
+
+    const unsub = onSnapshot(userCollection("units", userId), (snapshot) => {
       const firestoreUnits = snapshot.docs.map((doc) => doc.data().name);
       setUnits([...new Set([...defaultUnits, ...firestoreUnits])]);
     });

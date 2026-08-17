@@ -1,9 +1,6 @@
 // src/pages/invoice/InvoicePrint.js
 import { formatCurrency, amountToWords, parseInvoiceDate } from "./invoiceUtils";
-
-function getCurrencySymbol(currency) {
-  return currency === "AED" ? "AED" : "₹";
-}
+import { getDocumentStyle, getDocumentStyleId } from "../../config/documentStyles";
 
 function getCurrencyWords(currency) {
   return currency === "AED" ? "Dirhams Only" : "Rupees Only";
@@ -29,6 +26,7 @@ export function renderInvoiceHtml(payload) {
 
   const d = parseInvoiceDate(invoiceDate);
   const dateStr = d.toLocaleDateString("en-IN");
+  const docStyle = getDocumentStyle(getDocumentStyleId(payload));
 
   /* ---------------- CALCULATE TOTALS ---------------- */
   const totals = (() => {
@@ -96,7 +94,7 @@ export function renderInvoiceHtml(payload) {
       padding: 24px;
       max-width: 900px;
       margin: auto;
-      color: #222;
+      color: ${docStyle.html.text};
     }
 
     .header {
@@ -112,15 +110,19 @@ export function renderInvoiceHtml(payload) {
     }
 
     th {
-      background: #2f86b9;
+      background: ${docStyle.html.primary};
       color: white;
       padding: 8px;
-      border: 1px solid #ccc;
+      border: 1px solid ${docStyle.html.border};
     }
 
     .cell {
       padding: 8px;
-      border: 1px solid #ddd;
+      border: 1px solid ${docStyle.html.border};
+    }
+
+    tbody tr:nth-child(even) {
+      background: ${docStyle.html.tableStripe};
     }
 
     .right { text-align: right; }
@@ -129,7 +131,7 @@ export function renderInvoiceHtml(payload) {
     .summary-box {
       width: 260px;
       padding: 12px;
-      border: 1px solid #ddd;
+      border: 1px solid ${docStyle.html.border};
       border-radius: 8px;
       float: right;
       margin-top: 10px;
@@ -144,7 +146,7 @@ export function renderInvoiceHtml(payload) {
       font-style: italic;
       text-align: center;
       margin-top: 30px;
-      color: #666;
+      color: ${docStyle.html.muted};
     }
   </style>
 </head>

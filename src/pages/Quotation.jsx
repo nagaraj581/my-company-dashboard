@@ -1,59 +1,64 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  collection,
-  getDocs,
   addDoc,
   updateDoc,
   deleteDoc,
-  doc,
   onSnapshot,
   query,
   where,
-  orderBy,
-  limit,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { useNavigate } from "react-router-dom";
+import { auth } from "../firebase";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { getCompanyInfo } from "../config/companyInfo";
-import { useNavigate } from "react-router-dom";
-import { getAuth } from "firebase/auth";
+import {
+  DEFAULT_DOCUMENT_STYLE_ID,
+  getDocumentStyle,
+} from "../config/documentStyles";
 import { useCurrency } from "../context/CurrencyContext";
 import { SkeletonLoader } from "../components/SkeletonLoader";
+import { getCurrentUserId, userCollection, userDoc } from "../services/userDb";
 
-
-
+const emptyItemForm = {
+  selectedItem: "",
+  customName: "",
+  unit: "",
+  quantity: "",
+  rate: "",
+};
 
 export default function Quotation() {
   const [items, setItems] = useState([]);
   const [quotationItems, setQuotationItems] = useState([]);
   const [quotations, setQuotations] = useState([]);
   const [loadingQuotations, setLoadingQuotations] = useState(true);
-  const [selectedItem, setSelectedItem] = useState("");
-  const [customName, setCustomName] = useState("");
-  const [unit, setUnit] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [rate, setRate] = useState("");
+  const [itemForm, setItemForm] = useState(emptyItemForm);
   const [customer, setCustomer] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
   const [editingQuotation, setEditingQuotation] = useState(null);
   const [hideRates, setHideRates] = useState(false);
   const { currency } = useCurrency();
-  const currencySymbol = currency === "AED" ? "AED" : "₹";
+  const currencySymbol = currency === "AED" ? "AED" : "Rs.";
 
-  const auth = getAuth();
   const loggedUser = auth.currentUser?.displayName || "User";
   const [preparedBy, setPreparedBy] = useState(loggedUser);
+  const navigate = useNavigate();
 
-
-  // ✅ Load items from Firestore
+  // Load items from Firestore
   useEffect(() => {
-  if (!currency) return; // 🔑 IMPORTANT GUARD
+  if (!currency) return;
+
+  const userId = getCurrentUserId();
+  if (!userId) {
+    setItems([]);
+    return undefined;
+  }
 
   const q = query(
-    collection(db, "items"),
+    userCollection("items", userId),
     where("currency", "==", currency)
   );
 
@@ -63,57 +68,53 @@ export default function Quotation() {
 
   return () => unsub();
 }, [currency]);
-
-  // ... after useState declarations and after fetch items useEffect
-useEffect(() => {
-  if (!selectedItem || selectedItem === "custom") return;
-
-  const itm = items.find(i => i.id === selectedItem);
-  if (itm) {
-    setCustomName(itm.name);
-    setUnit(itm.unit || "");
-    setRate(itm.rate || "");
-  }
-}, [selectedItem, items]);
-
-  const navigate = useNavigate();
-
-
-
-  // ✅ Listen for live quotation updates
+  
+  // Auto-fill form when selectedItem changes
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "quotations"), (snapshot) => {
+    if (!itemForm.selectedItem || itemForm.selectedItem === "custom") return;
+
+    const itm = items.find((i) => i.id === itemForm.selectedItem);
+    if (itm) {
+      setItemForm((prev) => ({ ...prev, customName: itm.name, unit: itm.unit || "", rate: itm.rate || "" }));
+    }
+  }, [itemForm.selectedItem, items]);
+
+  // Listen for live quotation updates
+  useEffect(() => {
+    const userId = getCurrentUserId();
+    if (!userId) {
+      setQuotations([]);
+      setLoadingQuotations(false);
+      return undefined;
+    }
+
+    const q = query(userCollection("quotations", userId), where("currency", "==", currency));
+
+    const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
       setQuotations(list.sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds));
-      setLoadingQuotations(false); // 🔑 IMPORTANT
+      setLoadingQuotations(false);
     });
     return () => unsub();
-  }, []);
+  }, [currency]);
 
-  
-
-  // ✅ Auto-generate next quotation number
-  const getNextQuotationNumber = async () => {
-    const q = query(
-      collection(db, "quotations"),
-      orderBy("createdAt", "desc"),
-      limit(1)
-    );
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) {
+  // Auto-generate next quotation number
+  const getNextQuotationNumber = useMemo(() => {
+    if (quotations.length === 0) {
       return `Q-${new Date().getFullYear()}-001`;
-    } else {
-      const last = snapshot.docs[0].data();
-      const lastNum = parseInt(last.quotationNo?.split("-")[2] || "0", 10) + 1;
-      return `Q-${new Date().getFullYear()}-${String(lastNum).padStart(3, "0")}`;
     }
-  };
+    // Assuming quotations are sorted descending by createdAt
+    const last = quotations[0];
+    const lastNum = parseInt(last.quotationNo?.split("-")[2] || "0", 10) + 1;
+    return `Q-${new Date().getFullYear()}-${String(lastNum).padStart(3, "0")}`;
+  }, [quotations]);
 
-  // ✅ Add or update item inside quotation
+  // Add or update item inside quotation
 const handleAddItem = () => {
+  const { selectedItem, customName, unit, quantity, rate } = itemForm;
   const itm = items.find(i => i.id === selectedItem);
 
   const itemName =
@@ -121,31 +122,26 @@ const handleAddItem = () => {
       ? customName.trim()
       : itm?.name;
 
-  const itemUnit =
-    selectedItem === "custom"
-      ? unit.trim()
-      : itm?.unit || "";
+  const itemUnit = selectedItem === "custom" ? unit.trim() : itm?.unit || "";
 
   if (!itemName || !quantity || !itemUnit)
     return alert("Please enter all fields");
 
-  // ⭐ FIX: Allow editable rate
+  // Allow editable rate
   let cleanRate;
-  if (selectedItem === "custom") {
-    cleanRate = Number(String(rate).replace(/[^0-9.]/g, "")) || 0;
-  } else {
-    cleanRate =
-      rate !== "" && !isNaN(rate)
-        ? Number(rate)
-        : Number(itm?.rate || 0);
+  if (selectedItem === "custom") { // For custom items, parse the input rate
+    cleanRate = Number(String(rate).replace(/[^0-9.]/g, '')) || 0;
+  } else { // For selected items, use the form's rate if edited, otherwise the item's default rate
+    cleanRate = (rate !== '' && !isNaN(rate)) ? Number(rate) : Number(itm?.rate || 0);
   }
+
 
   const cleanQty = Number(quantity);
 
   const newItem = {
     name: itemName,
     unit: itemUnit,
-    quantity: cleanQty,
+    quantity: cleanQty, // Ensure quantity is a number
     rate: cleanRate,
     amount: cleanQty * cleanRate,
   };
@@ -160,92 +156,84 @@ const handleAddItem = () => {
   }
 
   // Reset fields
-  setSelectedItem("");
-  setCustomName("");
-  setUnit("");
-  setQuantity("");
-  setRate("");
+  setItemForm(emptyItemForm);
 };
 
-  // ✅ Edit individual item
+  // Edit individual item
   const handleEditItem = (index) => {
     const item = quotationItems[index];
     setEditingIndex(index);
-    setSelectedItem("custom");
-    setCustomName(item.name);
-    setUnit(item.unit);
-    setQuantity(item.quantity);
-    setRate(item.rate);
+    setItemForm({
+      selectedItem: "custom",
+      customName: item.name,
+      unit: item.unit,
+      quantity: item.quantity,
+      rate: item.rate,
+    });
   };
 
-  // ✅ Delete individual item
+  // Delete individual item
   const handleDeleteItem = (index) => {
     if (window.confirm("Delete this item?")) {
       setQuotationItems(quotationItems.filter((_, i) => i !== index));
     }
   };
 
-  // ✅ Save or Update Quotation
+  // Save or update quotation
   const handleSaveQuotation = async () => {
     if (!customer.trim()) return alert("Enter customer name");
     if (quotationItems.length === 0) return alert("Add at least one item");
+    const userId = getCurrentUserId();
+    if (!userId) return alert("You must be signed in");
 
     setSaving(true);
     const total = quotationItems.reduce((sum, i) => sum + i.amount, 0);
 
     try {
+      const companyInfo = await getCompanyInfo();
+      const documentStyle = editingQuotation
+        ? editingQuotation.documentStyle || DEFAULT_DOCUMENT_STYLE_ID
+        : companyInfo?.documentStyle || DEFAULT_DOCUMENT_STYLE_ID;
+
       if (editingQuotation) {
-        // 🔹 Update existing quotation
-        const ref = doc(db, "quotations", editingQuotation.id);
+        // Update existing quotation
+        const ref = userDoc("quotations", editingQuotation.id, userId);
         await updateDoc(ref, {
           customer,
           items: quotationItems,
           total,
           preparedBy,
+          documentStyle,
         });
-        alert("✅ Quotation updated!");
+        alert("Quotation updated!");
       } else {
-        // 🔹 Add new quotation with unique number
-        const quotationNo = await getNextQuotationNumber();
-        await addDoc(collection(db, "quotations"), {
+        // Add new quotation with unique number
+        const quotationNo = getNextQuotationNumber;
+        await addDoc(userCollection("quotations", userId), {
           quotationNo,
           customer,
           items: quotationItems,
           total,
           currency,
           preparedBy,
+          documentStyle,
           createdAt: Timestamp.now(),
         });
-        alert(`✅ Quotation ${quotationNo} saved!`);
+        alert(`Quotation ${quotationNo} saved!`);
       }
 
       setCustomer("");
       setQuotationItems([]);
       setEditingQuotation(null);
     } catch (e) {
-      alert("❌ " + e.message);
+      alert(e.message);
     } finally {
       setSaving(false);
     }
   };
 
-  // ✅ Edit entire saved quotation
-  const handleEditQuotation = (quotation) => {
-    setCustomer(quotation.customer);
-    setQuotationItems(quotation.items);
-    setEditingQuotation(quotation);
-  };
-
-  // ✅ Delete saved quotation
-  const handleDeleteQuotation = async (id) => {
-    if (window.confirm("Are you sure you want to delete this quotation?")) {
-      await deleteDoc(doc(db, "quotations", id));
-      alert("🗑️ Quotation deleted");
-    }
-  };
-
-// ✅ FINAL — CLEAN, ERROR-FREE PDF EXPORT
-// ✅ Helper functions for currency
+// PDF export
+// Helper functions for currency
 function getCurrencySymbol(curr) {
   return curr === "AED" ? "AED" : "Rs";
 }
@@ -254,8 +242,30 @@ function getCurrencyWords(curr) {
   return curr === "AED" ? "Dirhams Only" : "Rupees Only";
 }
 
-const handleExportPDF = async (q, preview = false) => {
-    const companyInfo = await getCompanyInfo();
+const buildPdfPayload = async (q) => {
+  const companyInfo = await getCompanyInfo();
+  const isNew = !q.id;
+
+  const docStyleId =
+    q.documentStyle ||
+    (isNew ? companyInfo?.documentStyle : DEFAULT_DOCUMENT_STYLE_ID) ||
+    DEFAULT_DOCUMENT_STYLE_ID;
+
+  return {
+    ...q,
+    quotationNo: q.quotationNo || "Preview",
+    createdAt: q.createdAt || Timestamp.now(),
+    currency: q.currency || currency,
+    preparedBy: q.preparedBy || loggedUser,
+    companyInfo,
+    docStyle: getDocumentStyle(docStyleId),
+  };
+};
+
+const handleExportPDF = async (quoteData, preview = false) => {
+  const payload = await buildPdfPayload(quoteData);
+  const { companyInfo, docStyle } = payload;
+
   const doc = new jsPDF("p", "pt", "a4");
 
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -267,7 +277,7 @@ const handleExportPDF = async (q, preview = false) => {
   doc.setFontSize(26);
   doc.text("QUOTATION", left, 60);
 
-  doc.setDrawColor(30, 80, 130);
+  doc.setDrawColor(...docStyle.primary);
   doc.setLineWidth(1.2);
   doc.line(left, 75, pageWidth - right, 75);
 
@@ -295,11 +305,11 @@ const handleExportPDF = async (q, preview = false) => {
 
   /* ------------------------ QUOTATION META RIGHT ------------------------ */
   const metaX = pageWidth - right;
-  const dateStr =
-    q.createdAt?.toDate().toLocaleDateString("en-IN") ||
-    new Date().toLocaleDateString("en-IN");
+  const dateStr = payload.createdAt
+    ?.toDate()
+    .toLocaleDateString("en-IN");
 
-  doc.text(`Quotation No: ${q.quotationNo}`, metaX, 100, { align: "right" });
+  doc.text(`Quotation No: ${payload.quotationNo}`, metaX, 100, { align: "right" });
   doc.text(`Date: ${dateStr}`, metaX, 118, { align: "right" });
 
   /* ---------------------------- CUSTOMER --------------------------- */
@@ -311,7 +321,7 @@ const handleExportPDF = async (q, preview = false) => {
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(12);
-  doc.text(String(q.customer || ""), left + 75, y);
+  doc.text(String(payload.customer || ""), left + 75, y);
 
   /* ------------------------------ TABLE ------------------------------ */
   const tableStart = y + 25;
@@ -322,7 +332,7 @@ const handleExportPDF = async (q, preview = false) => {
     ? [["#", "Item", "Qty", "Unit", "Amount"]]
     : [["#", "Item", "Qty", "Unit", "Rate", "Amount"]];
 
-  const body = q.items.map((i, idx) => {
+  const body = payload.items.map((i, idx) => {
     const amount = Number(i.amount || i.quantity * i.rate);
 
     return hide
@@ -355,10 +365,13 @@ const handleExportPDF = async (q, preview = false) => {
       cellPadding: 6,
     },
     headStyles: {
-      fillColor: [30, 80, 130],
+      fillColor: docStyle.primary,
       textColor: 255,
       fontStyle: "bold",
       halign: "center",
+    },
+    alternateRowStyles: {
+      fillColor: docStyle.tableStripe,
     },
     columnStyles: hide
       ? {
@@ -381,7 +394,7 @@ const handleExportPDF = async (q, preview = false) => {
   const finalY = doc.lastAutoTable.finalY + 20;
 
   /* ----------------------------- TOTAL ------------------------------ */
-  const total = q.items.reduce((s, i) => s + i.amount, 0);
+  const total = payload.items.reduce((s, i) => s + i.amount, 0);
 
   const totalXLabel = pageWidth - right - 200;
   const totalXValue = pageWidth - right;
@@ -391,7 +404,7 @@ const handleExportPDF = async (q, preview = false) => {
 
   doc.text("Total:", totalXLabel, finalY);
   doc.text(
-    `${getCurrencySymbol(q.currency || currency)} ${total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
+    `${getCurrencySymbol(payload.currency)} ${total.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`,
     totalXValue,
     finalY,
     { align: "right" }
@@ -402,18 +415,19 @@ const handleExportPDF = async (q, preview = false) => {
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(`Amount in words: ${words} ${getCurrencyWords(q.currency || currency)}`, left, finalY + 40);
+  doc.text(`Amount in words: ${words} ${getCurrencyWords(payload.currency)}`, left, finalY + 40);
 
   /* ----------------------------- SIGNATURE ---------------------------- */
   const sigY = finalY + 100;
 
-  const user = q.preparedBy || loggedUser;
+  const user = payload.preparedBy;
 
   doc.line(left, sigY, left + 180, sigY);
   doc.text(`Prepared By: ${user}`, left, sigY + 15);
 
   doc.line(pageWidth - right - 180, sigY, pageWidth - right, sigY);
   doc.text("Authorized Signature", pageWidth - right - 140, sigY + 15);
+
 
   /* ------------------------------ FOOTER ------------------------------ */
   doc.setFont("helvetica", "italic");
@@ -430,10 +444,10 @@ if (preview) {
   const blobUrl = doc.output("bloburl");
   window.open(blobUrl, "_blank");
 } else {
-  doc.save(`${q.quotationNo}.pdf`);
+  doc.save(`${payload.quotationNo}.pdf`);
 }};
 
-// ✅ Helper: Convert numbers to words (Indian format)
+// Convert numbers to words (Indian format)
 function numberToWords(num) {
   if (!num) return "Zero";
   num = Math.floor(num);
@@ -506,80 +520,12 @@ function numberToWords(num) {
   return inWords(num) || "Zero";
 }
 
-// ✅ Helper: Convert numbers to words (Indian format)
-function numberToWordsInIndianFormat(num) {
-  if (num === 0) return "Zero";
-
-  const ones = [
-    "",
-    "One",
-    "Two",
-    "Three",
-    "Four",
-    "Five",
-    "Six",
-    "Seven",
-    "Eight",
-    "Nine",
-    "Ten",
-    "Eleven",
-    "Twelve",
-    "Thirteen",
-    "Fourteen",
-    "Fifteen",
-    "Sixteen",
-    "Seventeen",
-    "Eighteen",
-    "Nineteen",
-  ];
-  const tens = [
-    "",
-    "",
-    "Twenty",
-    "Thirty",
-    "Forty",
-    "Fifty",
-    "Sixty",
-    "Seventy",
-    "Eighty",
-    "Ninety",
-  ];
-
-  function twoDigits(n) {
-    return n < 20 ? ones[n] : tens[Math.floor(n / 10)] + (n % 10 ? " " + ones[n % 10] : "");
-  }
-
-  function threeDigits(n) {
-    let str = "";
-    if (n > 99) {
-      str += ones[Math.floor(n / 100)] + " Hundred";
-      n = n % 100;
-      if (n) str += " and ";
-    }
-    if (n) str += twoDigits(n);
-    return str.trim();
-  }
-
-  const crore = Math.floor(num / 10000000);
-  const lakh = Math.floor((num / 100000) % 100);
-  const thousand = Math.floor((num / 1000) % 100);
-  const hundred = Math.floor(num % 1000);
-
-  let words = "";
-  if (crore) words += threeDigits(crore) + " Crore ";
-  if (lakh) words += threeDigits(lakh) + " Lakh ";
-  if (thousand) words += threeDigits(thousand) + " Thousand ";
-  if (hundred) words += threeDigits(hundred);
-
-  return words.trim().replace(/\s+/g, " ");
-}
-
   return (
     <div className="space-y-8">
       {/* Header */}
       <div>
         <h2 className="text-3xl font-bold bg-gradient-to-r from-sky-600 to-indigo-600 bg-clip-text text-transparent mb-2 flex items-center gap-2">
-          📑 Quotation
+          Quotation
         </h2>
         <p className="text-slate-600 dark:text-slate-400">Create professional quotations for your clients</p>
       </div>
@@ -598,7 +544,7 @@ function numberToWordsInIndianFormat(num) {
             />
           </div>
           <div className="space-y-2">
-            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">💱 Currency</label>
+            <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300">Currency</label>
             <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-slate-700 border border-sky-200 dark:border-slate-600 font-semibold text-sky-700 dark:text-sky-400">
               {currency}
             </div>
@@ -615,12 +561,12 @@ function numberToWordsInIndianFormat(num) {
           <div className="space-y-2">
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Item</label>
             <select
-              value={selectedItem}
-              onChange={(e) => setSelectedItem(e.target.value)}
+              value={itemForm.selectedItem}
+              onChange={(e) => setItemForm({ ...itemForm, selectedItem: e.target.value })}
               className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
             >
               <option value="">Select Item</option>
-              <option value="custom">➕ Custom Item</option>
+              <option value="custom">Custom Item</option>
               {items.map((i) => (
                 <option key={i.id} value={i.id}>
                   {i.name}
@@ -630,13 +576,13 @@ function numberToWordsInIndianFormat(num) {
           </div>
 
           {/* Custom Item Name */}
-          {selectedItem === "custom" && (
+          {itemForm.selectedItem === "custom" && (
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Item Name</label>
               <input
                 type="text"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
+                value={itemForm.customName}
+                onChange={(e) => setItemForm({ ...itemForm, customName: e.target.value })}
                 placeholder="Enter custom item"
                 className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
               />
@@ -648,8 +594,8 @@ function numberToWordsInIndianFormat(num) {
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Qty</label>
             <input
               type="number"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
+              value={itemForm.quantity}
+              onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })}
               placeholder="0"
               className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
             />
@@ -660,8 +606,8 @@ function numberToWordsInIndianFormat(num) {
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Unit</label>
             <input
               type="text"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
+              value={itemForm.unit}
+              onChange={(e) => setItemForm({ ...itemForm, unit: e.target.value })}
               placeholder="e.g. Nos, Kgs"
               className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
             />
@@ -672,8 +618,8 @@ function numberToWordsInIndianFormat(num) {
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Rate</label>
             <input
               type="number"
-              value={rate}
-              onChange={(e) => setRate(e.target.value)}
+              value={itemForm.rate}
+              onChange={(e) => setItemForm({ ...itemForm, rate: e.target.value })}
               placeholder="0.00"
               className="w-full px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-sky-500 transition-all"
             />
@@ -688,7 +634,7 @@ function numberToWordsInIndianFormat(num) {
                 : "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
             } text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 px-4 py-3`}
           >
-            {editingIndex !== null ? "✏️ Update Item" : "➕ Add Item"}
+            {editingIndex !== null ? "Update Item" : "Add Item"}
           </button>
         </div>
       </div>
@@ -780,12 +726,12 @@ function numberToWordsInIndianFormat(num) {
   onClick={() =>
     handleExportPDF(
       {
-        quotationNo: "Preview",
         customer,
         items: quotationItems,
-        currency,
         preparedBy,
-        createdAt: Timestamp.now(),
+        documentStyle: editingQuotation
+          ? editingQuotation.documentStyle || DEFAULT_DOCUMENT_STYLE_ID
+          : undefined,
       },
       true
     )
@@ -793,7 +739,7 @@ function numberToWordsInIndianFormat(num) {
   disabled={quotationItems.length === 0}
   className="w-full mb-3 bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg shadow font-semibold"
 >
-  👁 Preview PDF
+  Preview PDF
 </button>
 
         <div className="space-y-2 mb-3">
@@ -815,22 +761,22 @@ function numberToWordsInIndianFormat(num) {
           className="w-full bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 disabled:opacity-50 text-white px-6 py-4 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 font-semibold text-lg"
         >
           {saving
-            ? "💾 Saving..."
+            ? "Saving..."
             : editingQuotation
-            ? "💾 Update Quotation"
-            : "💾 Save Quotation"}
+            ? "Update Quotation"
+            : "Save Quotation"}
         </button>
       </div>
 
       {/* Saved Quotations */}
       <div className="space-y-4">
-        <h3 className="text-2xl font-bold text-slate-800 dark:text-white">🗂️ Saved Quotations</h3>
+        <h3 className="text-2xl font-bold text-slate-800 dark:text-white">Saved Quotations</h3>
 
         {loadingQuotations ? (
           <SkeletonLoader rows={3} variant="card" />
         ) : quotations.length === 0 ? (
           <div className="text-center py-12 bg-slate-50 dark:bg-slate-800 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600">
-            <p className="text-slate-500 dark:text-slate-400 text-lg">📭 No quotations yet. Create your first quotation!</p>
+            <p className="text-slate-500 dark:text-slate-400 text-lg">No quotations yet. Create your first quotation!</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3">
@@ -842,7 +788,7 @@ function numberToWordsInIndianFormat(num) {
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div className="flex-1">
                     <h4 className="text-lg font-bold text-sky-600 dark:text-sky-400">
-                      🧾 {q.quotationNo || "-"}
+                      {q.quotationNo || "-"}
                     </h4>
                     <p className="text-slate-700 dark:text-slate-300 mt-1">
                       <span className="font-semibold">Client:</span> {q.customer}
@@ -859,36 +805,42 @@ function numberToWordsInIndianFormat(num) {
     setQuotationItems(q.items);
     setCustomer(q.customer);
     setPreparedBy(q.preparedBy || loggedUser);
-    setEditingQuotation(q);   // ✅ THIS makes it edit mode
+    setEditingQuotation(q);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }}
   className="bg-slate-500 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
 >
-  📂 Open
+  Open
 </button>
 
                     <button
   onClick={() => handleExportPDF(q, true)}
   className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
 >
-  👁 Preview
+  Preview
 </button>
 
 <button
   onClick={() => handleExportPDF(q)}
   className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
 >
-  ⬇ Download
+  Download
 </button>
+                    <button
+                      onClick={() => navigate("/invoice", { state: { quotation: q } })}
+                      className="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
+                    >
+                      Create Invoice
+                    </button>
                     <button
                       onClick={() => {
                         if (window.confirm("Delete this quotation?")) {
-                          deleteDoc(doc(db, "quotations", q.id));
+                          deleteDoc(userDoc("quotations", q.id));
                         }
                       }}
                       className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200"
                     >
-                      🗑️ Delete
+                      Delete
                     </button>
                   </div>
                 </div>
@@ -900,4 +852,3 @@ function numberToWordsInIndianFormat(num) {
     </div>
   );
 }
-

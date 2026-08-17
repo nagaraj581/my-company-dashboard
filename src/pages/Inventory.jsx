@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { collection, query, where, onSnapshot, getDocs } from "firebase/firestore";
-import { db } from "../firebase";
+import { getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { AlertTriangle, CheckCircle2, PackageSearch, Warehouse } from "lucide-react";
 import { useCurrency } from "../context/CurrencyContext";
+import { SkeletonLoader } from "../components/SkeletonLoader";
+import { getCurrentUserId, userCollection } from "../services/userDb";
 
 export default function Inventory() {
   const { currency } = useCurrency();
@@ -9,43 +11,47 @@ export default function Inventory() {
   const [stocks, setStocks] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Load items (same logic as Items.jsx)
   useEffect(() => {
-    const q = query(
-      collection(db, "items"),
-      where("currency", "==", currency)
+    const userId = getCurrentUserId();
+    if (!userId) {
+      setItems([]);
+      setStocks({});
+      setLoading(false);
+      return undefined;
+    }
+
+    const itemsQuery = query(
+      userCollection("items", userId),
+      where("currency", "==", currency),
     );
 
-    const unsub = onSnapshot(q, async (snapshot) => {
-      const list = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+    const unsub = onSnapshot(itemsQuery, async (snapshot) => {
+      const list = snapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
       setItems(list);
-      const movementsQuery = query(
-        collection(db, "stockMovements"),
-        where("currency", "==", currency)
+
+      const movementSnapshot = await getDocs(
+        query(
+          userCollection("stockMovements", userId),
+          where("currency", "==", currency),
+        ),
       );
 
-      const movementSnapshot = await getDocs(movementsQuery);
-
       const stockMap = {};
-
       movementSnapshot.forEach((doc) => {
         const data = doc.data();
         const { itemId, type, quantity } = data;
 
-        if (!stockMap[itemId]) {
-          stockMap[itemId] = 0;
-        }
-
-        if (type === "IN") {
-          stockMap[itemId] += Number(quantity);
-        } else if (type === "OUT") {
-          stockMap[itemId] -= Number(quantity);
-        }
+        if (!stockMap[itemId]) stockMap[itemId] = 0;
+        if (type === "IN") stockMap[itemId] += Number(quantity);
+        if (type === "OUT") stockMap[itemId] -= Number(quantity);
       });
+
       setStocks(stockMap);
       setLoading(false);
     });
@@ -59,72 +65,124 @@ export default function Inventory() {
     return "healthy";
   };
 
+  const totalStock = items.reduce((sum, item) => sum + (stocks[item.id] || 0), 0);
+  const lowCount = items.filter((item) => getStockStatus(stocks[item.id] || 0, item.minStock || 0) === "low").length;
+
   return (
     <div className="space-y-8">
-      <h2 className="text-3xl font-bold bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
-        📦 Inventory Overview
-      </h2>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-3xl font-bold bg-gradient-to-r from-emerald-600 to-sky-600 bg-clip-text text-transparent">
+            <Warehouse className="text-emerald-600" size={30} />
+            Inventory Overview
+          </h2>
+          <p className="mt-2 text-slate-600 dark:text-slate-400">
+            Current stock position for {currency}.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:min-w-80">
+          <SummaryPill label="Total Stock" value={totalStock} tone="sky" />
+          <SummaryPill label="Low Items" value={lowCount} tone="red" />
+        </div>
+      </div>
 
       {loading ? (
-        <p className="text-gray-500">Loading inventory...</p>
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <SkeletonLoader rows={6} variant="card" />
+        </div>
       ) : items.length === 0 ? (
-        <p className="text-gray-500">No items found.</p>
+        <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-10 text-center shadow-sm dark:border-slate-700/70 dark:bg-slate-900/75">
+          <PackageSearch className="mx-auto mb-3 text-slate-400" size={36} />
+          <p className="font-semibold text-slate-600 dark:text-slate-300">No items found.</p>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {items.map((item) => {
             const stock = stocks[item.id] || 0;
             const minStock = item.minStock || 0;
             const status = getStockStatus(stock, minStock);
+            const statusConfig = {
+              low: {
+                shell: "border-red-200 bg-red-50/90 dark:border-red-900/60 dark:bg-red-950/25",
+                bar: "bg-red-500",
+                text: "text-red-700 dark:text-red-300",
+                label: "Low Stock",
+                icon: AlertTriangle,
+              },
+              warning: {
+                shell: "border-amber-200 bg-amber-50/90 dark:border-amber-900/60 dark:bg-amber-950/25",
+                bar: "bg-amber-500",
+                text: "text-amber-700 dark:text-amber-300",
+                label: "Near Minimum",
+                icon: AlertTriangle,
+              },
+              healthy: {
+                shell: "border-emerald-200 bg-emerald-50/90 dark:border-emerald-900/60 dark:bg-emerald-950/25",
+                bar: "bg-emerald-500",
+                text: "text-emerald-700 dark:text-emerald-300",
+                label: "Healthy",
+                icon: CheckCircle2,
+              },
+            }[status];
+            const StatusIcon = statusConfig.icon;
+            const percent = Math.min((stock / Math.max(minStock, 1)) * 100, 100);
 
             return (
               <div
                 key={item.id}
-                className={`rounded-xl p-6 shadow-md border transition-all ${
-                  status === "low"
-                    ? "border-red-400 bg-red-50"
-                    : status === "warning"
-                    ? "border-yellow-400 bg-yellow-50"
-                    : "border-green-400 bg-green-50"
-                }`}
+                className={`rounded-2xl border p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${statusConfig.shell}`}
               >
-                <h3 className="text-lg font-semibold">{item.name}</h3>
-                <p className="text-sm text-gray-600 mt-1">
-                  Stock: <span className="font-bold">{stock}</span> {item.unit}
-                </p>
-                <p className="text-sm text-gray-600">
-                  Min Level: {minStock}
-                </p>
-
-                <div className="mt-4 h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full ${
-                      status === "low"
-                        ? "bg-red-500"
-                        : status === "warning"
-                        ? "bg-yellow-500"
-                        : "bg-green-500"
-                    }`}
-                    style={{
-                      width: `${Math.min(
-                        (stock / (minStock || 1)) * 100,
-                        100
-                      )}%`,
-                    }}
-                  />
+                <div className="mb-5 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-lg font-bold text-slate-950 dark:text-white">
+                      {item.name}
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                      Min level: {minStock} {item.unit}
+                    </p>
+                  </div>
+                  <div className={`rounded-xl bg-white/80 p-2 ${statusConfig.text} dark:bg-slate-900/50`}>
+                    <StatusIcon size={20} />
+                  </div>
                 </div>
 
-                <p className="mt-3 text-sm font-medium">
-                  {status === "low"
-                    ? "⚠ Low Stock"
-                    : status === "warning"
-                    ? "⚠ Near Minimum"
-                    : "✅ Healthy"}
-                </p>
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <div className="text-3xl font-extrabold text-slate-950 dark:text-white">
+                      {stock}
+                    </div>
+                    <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+                      {item.unit || "units"}
+                    </div>
+                  </div>
+                  <div className={`text-sm font-bold ${statusConfig.text}`}>
+                    {statusConfig.label}
+                  </div>
+                </div>
+
+                <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/80 dark:bg-slate-800">
+                  <div className={`h-full rounded-full ${statusConfig.bar}`} style={{ width: `${percent}%` }} />
+                </div>
               </div>
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function SummaryPill({ label, value, tone }) {
+  const color =
+    tone === "red"
+      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+      : "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-300";
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 shadow-sm ${color}`}>
+      <div className="text-2xl font-extrabold">{value}</div>
+      <div className="text-xs font-bold uppercase">{label}</div>
     </div>
   );
 }

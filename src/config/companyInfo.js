@@ -1,4 +1,5 @@
 import { getActiveCompanyId, getCompany } from "../services/companyService";
+import { DEFAULT_DOCUMENT_STYLE_ID } from "./documentStyles";
 
 let cache = null;
 
@@ -20,6 +21,7 @@ export async function getCompanyInfo() {
 
   cache = {
     ...company,
+    documentStyle: company.documentStyle || DEFAULT_DOCUMENT_STYLE_ID,
     activeUpi,
   };
 

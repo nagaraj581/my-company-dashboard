@@ -1,5 +1,6 @@
 // src/pages/company/CompanyList.jsx
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   getCompanies,
   saveCompany,
@@ -9,6 +10,11 @@ import {
   getCompany,
 } from "../../services/companyService";
 import { clearCompanyInfoCache } from "../../config/companyInfo"; // call this after changing active company
+import {
+  DEFAULT_DOCUMENT_STYLE_ID,
+  DOCUMENT_STYLE_OPTIONS,
+  getDocumentStyle,
+} from "../../config/documentStyles";
 import { generateUPIQR } from "../../services/upiService";
 
 export default function CompanyList() {
@@ -29,6 +35,7 @@ export default function CompanyList() {
     upiId: "",
     upiName: "",
     qrBase64: "",
+    documentStyle: DEFAULT_DOCUMENT_STYLE_ID,
   });
 
   useEffect(() => {
@@ -54,6 +61,7 @@ export default function CompanyList() {
       upiId: "",
       upiName: "",
       qrBase64: "",
+      documentStyle: DEFAULT_DOCUMENT_STYLE_ID,
     });
     setShowModal(true);
   }
@@ -71,6 +79,7 @@ export default function CompanyList() {
       upiId: c.upiId || "",
       upiName: c.upiName || "",
       qrBase64: c.qrBase64 || "",
+      documentStyle: c.documentStyle || DEFAULT_DOCUMENT_STYLE_ID,
     });
     setShowModal(true);
   }
@@ -84,7 +93,7 @@ export default function CompanyList() {
     // basic validation
     if (!form.name.trim()) return alert("Company name required");
     try {
-      const id = await saveCompany(editing, {
+      await saveCompany(editing, {
         name: form.name,
         address: form.address,
         phone: form.phone,
@@ -94,11 +103,13 @@ export default function CompanyList() {
         upiId: form.upiId,
         upiName: form.upiName,
         qrBase64: form.qrBase64,
+        documentStyle: form.documentStyle || DEFAULT_DOCUMENT_STYLE_ID,
       });
 
       // refresh list
       const list = await getCompanies();
       setCompanies(list);
+      clearCompanyInfoCache();
       setShowModal(false);
       setEditing(null);
       alert("Saved");
@@ -137,7 +148,7 @@ export default function CompanyList() {
       alert("Failed to set active: " + err.message);
     }
   }
-async function handleGenerateQR() {
+  async function handleGenerateQR() {
   if (!form.upiId || !form.upiName) {
     alert("Enter UPI ID and Beneficiary Name first.");
     return;
@@ -150,6 +161,141 @@ async function handleGenerateQR() {
     alert("Failed to generate QR");
   }
 }
+
+  const modal =
+    showModal && typeof document !== "undefined"
+      ? createPortal(
+          <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-24 pb-6">
+            <div className="bg-white rounded-lg w-full max-w-2xl p-6 shadow-lg max-h-[calc(100vh-7rem)] overflow-y-auto">
+              <h3 className="text-lg font-semibold mb-4">
+                {editing ? "Edit Company" : "New Company"}
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input
+                  name="name"
+                  value={form.name}
+                  onChange={handleChange}
+                  placeholder="Company Name"
+                  className="p-3 border rounded"
+                />
+                <input
+                  name="phone"
+                  value={form.phone}
+                  onChange={handleChange}
+                  placeholder="Phone"
+                  className="p-3 border rounded"
+                />
+                <input
+                  name="email"
+                  value={form.email}
+                  onChange={handleChange}
+                  placeholder="Email"
+                  className="p-3 border rounded"
+                />
+                <input
+                  name="gst"
+                  value={form.gst}
+                  onChange={handleChange}
+                  placeholder="GST (optional)"
+                  className="p-3 border rounded"
+                />
+
+                <textarea
+                  name="address"
+                  value={form.address}
+                  onChange={handleChange}
+                  placeholder="Address"
+                  rows={4}
+                  className="p-3 border rounded md:col-span-2"
+                />
+                <input
+                  name="upiId"
+                  value={form.upiId}
+                  onChange={handleChange}
+                  placeholder="Default UPI ID (optional)"
+                  className="p-3 border rounded"
+                />
+                <input
+                  name="upiName"
+                  value={form.upiName}
+                  onChange={handleChange}
+                  placeholder="UPI Beneficiary Name (optional)"
+                  className="p-3 border rounded"
+                />
+                <select
+                  name="documentStyle"
+                  value={form.documentStyle}
+                  onChange={handleChange}
+                  className="p-3 border rounded md:col-span-2"
+                >
+                  {DOCUMENT_STYLE_OPTIONS.map((style) => (
+                    <option key={style.id} value={style.id}>
+                      Document Style: {style.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="md:col-span-2 border rounded p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-sm">UPI QR Code</span>
+                    <button
+                      type="button"
+                      onClick={handleGenerateQR}
+                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded"
+                    >
+                      Generate QR
+                    </button>
+                  </div>
+
+                  {form.qrBase64 ? (
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={form.qrBase64}
+                        alt="UPI QR"
+                        className="w-28 h-28 border rounded"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, qrBase64: "" }))}
+                        className="text-red-600 underline text-sm"
+                      >
+                        Remove QR
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-sm">No QR generated yet.</p>
+                  )}
+                </div>
+
+                <textarea
+                  name="terms"
+                  value={form.terms}
+                  onChange={handleChange}
+                  placeholder="Terms & Conditions"
+                  rows={3}
+                  className="p-3 border rounded md:col-span-2"
+                />
+              </div>
+
+              <div className="mt-4 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="px-4 py-2 border rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-4 py-2 bg-blue-600 text-white rounded"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
 
 
   return (
@@ -181,6 +327,9 @@ async function handleGenerateQR() {
                 <div>
                   <div className="font-semibold">{c.name}</div>
                   <div className="text-sm text-gray-600">{c.address}</div>
+                  <div className="text-xs text-gray-500">
+                    Document style: {getDocumentStyle(c.documentStyle).name}
+                  </div>
                   <div className="text-sm text-gray-600">{c.phone} • {c.email}</div>
                 </div>
 
@@ -225,127 +374,7 @@ async function handleGenerateQR() {
         )}
       </div>
 
-      {/* ---------------- Modal ---------------- */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-lg w-full max-w-2xl p-6 shadow-lg">
-            <h3 className="text-lg font-semibold mb-4">
-              {editing ? "Edit Company" : "New Company"}
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                name="name"
-                value={form.name}
-                onChange={handleChange}
-                placeholder="Company Name"
-                className="p-3 border rounded"
-              />
-              <input
-                name="phone"
-                value={form.phone}
-                onChange={handleChange}
-                placeholder="Phone"
-                className="p-3 border rounded"
-              />
-              <input
-                name="email"
-                value={form.email}
-                onChange={handleChange}
-                placeholder="Email"
-                className="p-3 border rounded"
-              />
-              <input
-                name="gst"
-                value={form.gst}
-                onChange={handleChange}
-                placeholder="GST (optional)"
-                className="p-3 border rounded"
-              />
-
-              <textarea
-                name="address"
-                value={form.address}
-                onChange={handleChange}
-                placeholder="Address"
-                rows={4}
-                className="p-3 border rounded md:col-span-2"
-              />
-              <input
-                name="upiId"
-                value={form.upiId}
-                onChange={handleChange}
-                placeholder="Default UPI ID (optional)"
-                className="p-3 border rounded"
-              />
-              <input
-                name="upiName"
-                value={form.upiName}
-                onChange={handleChange}
-                placeholder="UPI Beneficiary Name (optional)"
-                className="p-3 border rounded"
-              />
-                            {/* ---------- UPI QR Block ---------- */}
-<div className="md:col-span-2 border rounded p-3">
-  <div className="flex items-center justify-between mb-2">
-    <span className="font-medium text-sm">UPI QR Code</span>
-    <button
-      type="button"
-      onClick={handleGenerateQR}
-      className="px-3 py-1 text-sm bg-blue-600 text-white rounded"
-    >
-      Generate QR
-    </button>
-  </div>
-
-  {form.qrBase64 ? (
-    <div className="flex items-center gap-4">
-      <img
-        src={form.qrBase64}
-        alt="UPI QR"
-        className="w-28 h-28 border rounded"
-      />
-      <button
-        type="button"
-        onClick={() => setForm((f) => ({ ...f, qrBase64: "" }))}
-        className="text-red-600 underline text-sm"
-      >
-        Remove QR
-      </button>
-    </div>
-  ) : (
-    <p className="text-gray-500 text-sm">No QR generated yet.</p>
-  )}
-</div>
-
-
-              <textarea
-                name="terms"
-                value={form.terms}
-                onChange={handleChange}
-                placeholder="Terms & Conditions"
-                rows={3}
-                className="p-3 border rounded md:col-span-2"
-              />
-            </div>
-
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setShowModal(false)}
-                className="px-4 py-2 border rounded"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 bg-blue-600 text-white rounded"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {modal}
     </div>
   );
 }

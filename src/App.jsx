@@ -20,6 +20,7 @@ import Inventory from "./pages/Inventory";
 import MaterialReceipt from "./pages/MaterialReceipt";
 import Projects from "./pages/Projects";
 import ProjectConsumption from "./pages/ProjectConsumption";
+import Suppliers from "./pages/Suppliers";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -140,6 +141,7 @@ export default function App() {
           <Route path="/quotation" element={<Quotation />} />
           <Route path="/invoice" element={<Invoice />} />
           <Route path="/items" element={<Items />} />
+          <Route path="/suppliers" element={<Suppliers />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/project-consumption" element={<ProjectConsumption />} />

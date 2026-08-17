@@ -1,5 +1,5 @@
-import { collection, addDoc, query, where, getDocs } from "firebase/firestore";
-import { db } from "../firebase";
+import { addDoc, query, where, getDocs } from "firebase/firestore";
+import { userCollection } from "./userDb";
 
 // 🔹 Add Stock Movement
 export const addStockMovement = async ({
@@ -12,7 +12,7 @@ export const addStockMovement = async ({
   currency,
   date,
 }) => {
-  await addDoc(collection(db, "stockMovements"), {
+  await addDoc(userCollection("stockMovements"), {
     itemId,
     itemName,
     type,
@@ -28,7 +28,7 @@ export const addStockMovement = async ({
 // 🔹 Get Current Stock for One Item
 export const getItemStock = async (itemId, currency) => {
   const q = query(
-    collection(db, "stockMovements"),
+    userCollection("stockMovements"),
     where("itemId", "==", itemId),
     where("currency", "==", currency)
   );

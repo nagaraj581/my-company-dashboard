@@ -1,9 +1,9 @@
 import { Link, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../firebase";
+import { onSnapshot } from "firebase/firestore";
 import { Sun, Moon, Menu, X } from "lucide-react";
 import { useCurrency } from "../context/CurrencyContext";
+import { getCurrentUserId, userDoc, userSettingDoc } from "../services/userDb";
 
 export default function Navbar({ user, onLogout, darkMode, setDarkMode }) {
   const location = useLocation();
@@ -12,7 +12,13 @@ export default function Navbar({ user, onLogout, darkMode, setDarkMode }) {
   const { currency, setCurrency } = useCurrency();
 
   useEffect(() => {
-    const activeRef = doc(db, "settings", "activeCompany");
+    const uid = getCurrentUserId();
+    if (!uid) {
+      setCompanyName("My Company LTD");
+      return undefined;
+    }
+
+    const activeRef = userSettingDoc("activeCompany", uid);
     const unsubActive = onSnapshot(activeRef, (activeSnap) => {
       if (!activeSnap.exists()) {
         setCompanyName("My Company LTD");
@@ -25,7 +31,7 @@ export default function Navbar({ user, onLogout, darkMode, setDarkMode }) {
         return;
       }
 
-      const companyRef = doc(db, "companies", activeId);
+      const companyRef = userDoc("companies", activeId, uid);
       const unsubCompany = onSnapshot(companyRef, (companySnap) => {
         if (companySnap.exists()) {
           const data = companySnap.data();
@@ -54,6 +60,7 @@ export default function Navbar({ user, onLogout, darkMode, setDarkMode }) {
     { name: "Quotation", path: "/quotation" },
     { name: "Invoice", path: "/invoice" },
     { name: "Items", path: "/items" },
+    { name: "Suppliers", path: "/suppliers" },
     { name: "Inventory", path: "/inventory" },
     { name: "Projects", path: "/projects" },
     { name: "Project Consumption", path: "/project-consumption" },
