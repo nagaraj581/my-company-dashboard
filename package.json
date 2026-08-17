@@ -1,11 +1,7 @@
 {
   "name": "my-company-dashboard",
   "private": true,
-<<<<<<< HEAD
   "version": "0.0.10",
-=======
-  "version": "0.0.6",
->>>>>>> 5087804 (deploy)
   "type": "module",
   "scripts": {
     "dev": "vite",
