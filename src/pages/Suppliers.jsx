@@ -9,7 +9,7 @@ import {
   where,
 } from "firebase/firestore";
 import { Edit3, Plus, Save, Trash2, X } from "lucide-react";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { getCurrentUserId, userCollection, userDoc } from "../services/userDb";
 import { SkeletonLoader } from "../components/SkeletonLoader";
 

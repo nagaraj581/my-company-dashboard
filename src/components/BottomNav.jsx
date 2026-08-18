@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Package,
@@ -25,7 +26,8 @@ export default function BottomNav({ darkMode }) {
       } shadow-[0_-12px_30px_rgba(15,23,42,0.2)]`}
     >
       <div className="flex justify-around px-2 py-3 max-w-4xl mx-auto">
-        {links.map(({ name, icon: Icon, path }) => {
+        {links.map((link) => {
+          const { name, path } = link;
           const isActive = location.pathname === path;
           return (
             <Link
@@ -39,7 +41,11 @@ export default function BottomNav({ darkMode }) {
                   : "text-slate-600 hover:text-sky-600 hover:bg-slate-100"
               }`}
             >
-              <Icon size={20} className={isActive ? "text-white" : ""} />
+              {createElement(link.icon, {
+                size: 20,
+                className: isActive ? "text-white" : "",
+                "aria-hidden": true,
+              })}
               <span className="text-xs font-semibold">{name}</span>
             </Link>
           );

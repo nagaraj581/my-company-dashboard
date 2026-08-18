@@ -2,7 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { onSnapshot } from "firebase/firestore";
 import { Sun, Moon, Menu, X } from "lucide-react";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { getCurrentUserId, userDoc, userSettingDoc } from "../services/userDb";
 
 export default function Navbar({ user, onLogout, darkMode, setDarkMode }) {

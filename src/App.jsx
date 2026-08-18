@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { auth } from "./firebase";
 import {
   onAuthStateChanged,
@@ -10,17 +10,29 @@ import {
 } from "firebase/auth";
 
 import Layout from "./components/Layout";
-import MaterialRequest from "./components/MaterialRequestForm";
-import Dashboard from "./pages/Dashboard";
-import Quotation from "./pages/Quotation";
-import Invoice from "./pages/Invoice";
-import Items from "./pages/Items";
-import CompanyList from "./pages/company/CompanyList";
-import Inventory from "./pages/Inventory";
-import MaterialReceipt from "./pages/MaterialReceipt";
-import Projects from "./pages/Projects";
-import ProjectConsumption from "./pages/ProjectConsumption";
-import Suppliers from "./pages/Suppliers";
+
+const MaterialRequest = lazy(() => import("./components/MaterialRequestForm"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Quotation = lazy(() => import("./pages/Quotation"));
+const Invoice = lazy(() => import("./pages/Invoice"));
+const Items = lazy(() => import("./pages/Items"));
+const CompanyList = lazy(() => import("./pages/company/CompanyList"));
+const Inventory = lazy(() => import("./pages/Inventory"));
+const MaterialReceipt = lazy(() => import("./pages/MaterialReceipt"));
+const Projects = lazy(() => import("./pages/Projects"));
+const ProjectConsumption = lazy(() => import("./pages/ProjectConsumption"));
+const Suppliers = lazy(() => import("./pages/Suppliers"));
+
+function PageLoader() {
+  return (
+    <div className="flex min-h-72 items-center justify-center">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white/85 px-5 py-4 text-sm font-bold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+        Loading workspace...
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -135,17 +147,17 @@ export default function App() {
     <Router>
       <Routes>
         <Route element={<Layout user={user} onLogout={handleLogout} />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/material-request" element={<MaterialRequest />} />
-          <Route path="/material-receipt" element={<MaterialReceipt />} />
-          <Route path="/quotation" element={<Quotation />} />
-          <Route path="/invoice" element={<Invoice />} />
-          <Route path="/items" element={<Items />} />
-          <Route path="/suppliers" element={<Suppliers />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/projects" element={<Projects />} />
-          <Route path="/project-consumption" element={<ProjectConsumption />} />
-          <Route path="/company" element={<CompanyList />} />
+          <Route path="/" element={<Suspense fallback={<PageLoader />}><Dashboard /></Suspense>} />
+          <Route path="/material-request" element={<Suspense fallback={<PageLoader />}><MaterialRequest /></Suspense>} />
+          <Route path="/material-receipt" element={<Suspense fallback={<PageLoader />}><MaterialReceipt /></Suspense>} />
+          <Route path="/quotation" element={<Suspense fallback={<PageLoader />}><Quotation /></Suspense>} />
+          <Route path="/invoice" element={<Suspense fallback={<PageLoader />}><Invoice /></Suspense>} />
+          <Route path="/items" element={<Suspense fallback={<PageLoader />}><Items /></Suspense>} />
+          <Route path="/suppliers" element={<Suspense fallback={<PageLoader />}><Suppliers /></Suspense>} />
+          <Route path="/inventory" element={<Suspense fallback={<PageLoader />}><Inventory /></Suspense>} />
+          <Route path="/projects" element={<Suspense fallback={<PageLoader />}><Projects /></Suspense>} />
+          <Route path="/project-consumption" element={<Suspense fallback={<PageLoader />}><ProjectConsumption /></Suspense>} />
+          <Route path="/company" element={<Suspense fallback={<PageLoader />}><CompanyList /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

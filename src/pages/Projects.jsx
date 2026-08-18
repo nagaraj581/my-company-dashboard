@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { addDoc, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
 import { Building2, MapPin, Plus, Search } from "lucide-react";
 import { getCurrentUserId, userCollection } from "../services/userDb";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 
 export default function Projects() {
   const { currency } = useCurrency();

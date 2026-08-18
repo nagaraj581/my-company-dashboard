@@ -13,7 +13,7 @@ import {
   Users,
   Warehouse,
 } from "lucide-react";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { getCurrentUserId, userCollection } from "../services/userDb";
 import { useOnFocus } from "./useOnFocus";
 
@@ -120,7 +120,7 @@ export default function Dashboard() {
   // Reload data when currency changes
   useEffect(() => {
     loadDashboard();
-  }, [currency]);
+  }, [loadDashboard]);
 
   // Reload data when the user navigates to this page
   useOnFocus(loadDashboard);

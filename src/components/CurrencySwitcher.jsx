@@ -1,5 +1,5 @@
 import { DollarSign, IndianRupee } from "lucide-react";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 
 export function CurrencySwitcher() {
   const { currency, setCurrency } = useCurrency();

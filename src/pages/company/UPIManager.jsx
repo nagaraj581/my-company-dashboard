@@ -7,7 +7,8 @@ import {
   deleteUpi,
   setCompanyDefaultUpi,
 } from "../../services/companyUpiService";
-import { generateUPIQRDataUrl } from "../../services/upiService";
+import { getCompany } from "../../services/companyService";
+import { generateUPIQR } from "../../services/upiService";
 import { clearCompanyInfoCache } from "../../config/companyInfo";
 
 /**
@@ -24,16 +25,33 @@ export default function UPIManager({ companyId, onClose }) {
   const [generating, setGenerating] = useState(false);
   const [defaultUpiId, setDefaultUpiId] = useState(null);
 
+  const refreshUpis = async () => {
+    const [list, company] = await Promise.all([getUpis(companyId), getCompany(companyId)]);
+    setUpis(list);
+    setDefaultUpiId(company?.defaultUpiId || null);
+  };
+
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) return undefined;
+    let active = true;
+
     (async () => {
       setLoading(true);
-      const list = await getUpis(companyId);
-      setUpis(list);
-      // read current default from company doc (optional)
-      const compRef = await fetch(`/__/firebase/init.json`).catch(() => null); // noop for fallback
-      setLoading(false);
+      try {
+        const [list, company] = await Promise.all([getUpis(companyId), getCompany(companyId)]);
+        if (!active) return;
+        setUpis(list);
+        setDefaultUpiId(company?.defaultUpiId || null);
+      } catch (error) {
+        console.error("Unable to load UPI accounts:", error);
+      } finally {
+        if (active) setLoading(false);
+      }
     })();
+
+    return () => {
+      active = false;
+    };
   }, [companyId]);
 
   function openNew() {
@@ -41,7 +59,7 @@ export default function UPIManager({ companyId, onClose }) {
     setForm({ upiId: "", name: "", bank: "", qrBase64: "" });
   }
 
-  async function openEdit(u) {
+  function openEdit(u) {
     setEditing(u.id);
     setForm({
       upiId: u.upiId || "",
@@ -60,7 +78,7 @@ export default function UPIManager({ companyId, onClose }) {
     if (!form.upiId) return alert("Enter UPI ID first");
     try {
       setGenerating(true);
-      const dataUrl = await generateUPIQRDataUrl(form.upiId, form.name || "");
+      const dataUrl = await generateUPIQR(form.upiId, form.name || "");
       setForm((f) => ({ ...f, qrBase64: dataUrl }));
     } catch (err) {
       console.error(err);
@@ -82,7 +100,7 @@ export default function UPIManager({ companyId, onClose }) {
         });
         alert("Updated");
       } else {
-        const newId = await addUpi(companyId, {
+        await addUpi(companyId, {
           upiId: form.upiId.trim(),
           name: form.name.trim(),
           bank: form.bank.trim(),
@@ -91,8 +109,7 @@ export default function UPIManager({ companyId, onClose }) {
         alert("Added");
       }
 
-      const list = await getUpis(companyId);
-      setUpis(list);
+      await refreshUpis();
       setEditing(null);
       setForm({ upiId: "", name: "", bank: "", qrBase64: "" });
     } catch (err) {
@@ -105,6 +122,11 @@ export default function UPIManager({ companyId, onClose }) {
     if (!window.confirm("Delete this UPI entry?")) return;
     try {
       await deleteUpi(companyId, upiDocId);
+      if (defaultUpiId === upiDocId) {
+        await setCompanyDefaultUpi(companyId, null);
+        setDefaultUpiId(null);
+        clearCompanyInfoCache();
+      }
       setUpis((s) => s.filter((u) => u.id !== upiDocId));
     } catch (err) {
       console.error(err);
@@ -151,7 +173,13 @@ export default function UPIManager({ companyId, onClose }) {
                 {u.qrBase64 && <img src={u.qrBase64} alt="qr" className="w-16 h-16 object-contain border" />}
                 <button onClick={() => openEdit(u)} className="px-3 py-1 border rounded text-sm">Edit</button>
                 <button onClick={() => handleDelete(u.id)} className="px-3 py-1 border rounded text-sm text-red-600">Delete</button>
-                <button onClick={() => handleSetDefault(u.id)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Set Default</button>
+                <button
+                  onClick={() => handleSetDefault(u.id)}
+                  className="px-3 py-1 bg-indigo-600 text-white rounded text-sm disabled:cursor-default disabled:opacity-60"
+                  disabled={defaultUpiId === u.id}
+                >
+                  {defaultUpiId === u.id ? "Default" : "Set Default"}
+                </button>
               </div>
             </div>
           ))

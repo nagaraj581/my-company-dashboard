@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { addDoc, getDocs, onSnapshot, query, serverTimestamp, where } from "firebase/firestore";
 import { AlertTriangle, ClipboardList, Plus, Save, Trash2 } from "lucide-react";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { addStockMovement } from "../services/stockService";
 import { getCurrentUserId, userCollection } from "../services/userDb";
 

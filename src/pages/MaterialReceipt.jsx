@@ -11,7 +11,7 @@ import { PackageCheck, Plus, Save, Trash2, UserPlus, X } from "lucide-react";
 
 import { addStockMovement } from "../services/stockService";
 import { SkeletonLoader } from "../components/SkeletonLoader";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { getCurrentUserId, userCollection } from "../services/userDb";
 
 const emptySupplierForm = {

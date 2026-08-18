@@ -17,7 +17,7 @@ import {
   DEFAULT_DOCUMENT_STYLE_ID,
   getDocumentStyle,
 } from "../config/documentStyles";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { SkeletonLoader } from "../components/SkeletonLoader";
 import { getCurrentUserId, userCollection, userDoc } from "../services/userDb";
 

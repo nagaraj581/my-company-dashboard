@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { AlertTriangle, CheckCircle2, PackageSearch, Warehouse } from "lucide-react";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { SkeletonLoader } from "../components/SkeletonLoader";
 import { getCurrentUserId, userCollection } from "../services/userDb";
 

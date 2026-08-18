@@ -4,10 +4,8 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
-  doc,
   onSnapshot,
   getDoc,
-  getDocs,
   Timestamp,
   query,
   where,
@@ -15,12 +13,11 @@ import {
 
 import { clearCompanyInfoCache, getCompanyInfo } from "../config/companyInfo";
 import { useUnits } from "../hooks/useUnits";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { useSearchParams, useLocation } from "react-router-dom";
 
 import {
   formatCurrency,
-  amountToWords,
   getNextInvoiceNumber,
   parseInvoiceDate,
   calcTotals,
@@ -28,7 +25,7 @@ import {
 
 import { exportPdf } from "./invoice/InvoicePDF";
 import { renderInvoiceHtml } from "./invoice/InvoicePrint";
-import { getCurrentUserId, userCollection, userDoc } from "../services/userDb";
+import { userCollection, userDoc } from "../services/userDb";
 
 export default function InvoicePage() {
   const { currency } = useCurrency();
@@ -68,6 +65,7 @@ export default function InvoicePage() {
   const [savedInvoices, setSavedInvoices] = useState([]);
   const [loadedInvoiceId, setLoadedInvoiceId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
 
   const [saving, setSaving] = useState(false);
   const [showQr, setShowQr] = useState(true);
@@ -181,16 +179,22 @@ export default function InvoicePage() {
   ]);
 
   const filteredInvoices = useMemo(() => {
-    if (!searchTerm) {
-      return savedInvoices;
-    }
-    const lowercasedTerm = searchTerm.toLowerCase();
-    return savedInvoices.filter(
-      (inv) =>
-        inv.invoiceNumber?.toLowerCase().includes(lowercasedTerm) ||
-        inv.customerName?.toLowerCase().includes(lowercasedTerm)
-    );
-  }, [savedInvoices, searchTerm]);
+    return savedInvoices
+      .filter(inv => {
+        if (statusFilter === "ALL") return true;
+        // Handle legacy invoices that might not have a status field
+        const currentStatus = inv.status || getInvoiceStatus(inv.totalAmount, inv.amountReceived);
+        return currentStatus === statusFilter;
+      })
+      .filter(inv => {
+        if (!searchTerm) return true;
+        const lowercasedTerm = searchTerm.toLowerCase();
+        return (
+          inv.invoiceNumber?.toLowerCase().includes(lowercasedTerm) ||
+          inv.customerName?.toLowerCase().includes(lowercasedTerm)
+        );
+      });
+  }, [savedInvoices, searchTerm, statusFilter]);
   /* ---------------------- Handle Form Changes ---------------------- */
   function handleChange(e) {
     const { name, value } = e.target;
@@ -264,6 +268,13 @@ export default function InvoicePage() {
     setRows((old) => old.filter((_, idx) => idx !== i));
   }
 
+  function getInvoiceStatus(total, received) {
+    const totalAmount = Number(total || 0);
+    const amountReceived = Number(received || 0);
+    if (amountReceived >= totalAmount) return "PAID";
+    if (amountReceived > 0) return "PARTIAL";
+    return "UNPAID";
+  }
   /* ---------------------- Save Invoice ---------------------- */
   async function saveInvoice() {
     if (!customerName.trim()) return alert("Enter customer name");
@@ -271,6 +282,7 @@ export default function InvoicePage() {
 
     setSaving(true);
     try {
+      const status = getInvoiceStatus(totals.total, amountReceived);
       const payload = {
   customerName,
   customerAddress,
@@ -283,6 +295,7 @@ export default function InvoicePage() {
   terms,
   invoiceTitle,
   amountReceived: Number(amountReceived || 0),
+  status,
 };
 
 
@@ -353,6 +366,18 @@ export default function InvoicePage() {
     }
   }
 
+  async function handleMarkAsPaid(invoice) {
+    if (!invoice || !invoice.id) return;
+    try {
+      await updateDoc(userDoc("invoices", invoice.id), {
+        status: "PAID",
+        amountReceived: invoice.totalAmount,
+      });
+    } catch (error) {
+      console.error("Failed to mark as paid:", error);
+      alert("Update failed. Please try again.");
+    }
+  }
   /* ---------------------- Start New Invoice (reset) ---------------------- */
   function newInvoice() {
     if (!window.confirm("Start new invoice? Unsaved changes will be lost.")) return;
@@ -698,26 +723,57 @@ function openPrintView(inv = null, autoPrint = false) {
       {/* Saved invoices list */}
       <div className="mt-10">
         <h3 className="text-lg font-semibold text-slate-800 mb-3">Saved Invoices</h3>
-        <div className="mb-4">
+        <div className="mb-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4">
           <input
             type="text"
             placeholder="Search by Invoice No or Customer..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="p-3 border rounded w-full md:w-1/2"
+            className="p-3 border rounded w-full"
           />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="p-3 border rounded w-full md:w-auto"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="PAID">Paid</option>
+            <option value="PARTIAL">Partial</option>
+            <option value="UNPAID">Unpaid</option>
+          </select>
         </div>
         {filteredInvoices.length === 0 ? (
           <p className="text-gray-500">{searchTerm ? "No invoices match your search." : "No invoices yet."}</p>
         ) : (
-          filteredInvoices.map((inv) => (
+          filteredInvoices.map((inv) => {
+            const status = inv.status || getInvoiceStatus(inv.totalAmount, inv.amountReceived);
+            const statusStyles = {
+              PAID: "bg-emerald-100 text-emerald-800",
+              PARTIAL: "bg-amber-100 text-amber-800",
+              UNPAID: "bg-red-100 text-red-800",
+            };
+            return (
             <div key={inv.id} className="bg-white border rounded p-4 mb-3 flex justify-between items-center">
               <div>
-                <div className="font-semibold">{inv.invoiceNumber}</div>
-                <div className="text-sm text-gray-600">{inv.customerName} • ₹ {formatCurrency(inv.totalAmount)}</div>
+                <div className="flex items-center gap-3">
+                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${statusStyles[status] || "bg-gray-100 text-gray-800"}`}>
+                    {status}
+                  </span>
+                  <div className="font-semibold">{inv.invoiceNumber}</div>
+                </div>
+                <div className="text-sm text-gray-600 mt-1">{inv.customerName} • ₹ {formatCurrency(inv.totalAmount)}</div>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => loadInvoice(inv)} className="bg-blue-500 text-white px-3 py-1 rounded">Open</button>
+                {status !== "PAID" && (
+                  <button
+                    onClick={() => handleMarkAsPaid(inv)}
+                    className="bg-lime-600 text-white px-3 py-1 rounded"
+                    title="Mark as fully paid"
+                  >
+                    Mark Paid
+                  </button>
+                )}
                 <button onClick={() => openPrintView(inv)} className="bg-gray-700 text-white px-3 py-1 rounded">Print</button>
 <button
   onClick={() =>
@@ -736,7 +792,7 @@ function openPrintView(inv = null, autoPrint = false) {
                 <button onClick={() => deleteInvoice(inv)} className="bg-red-500 text-white px-3 py-1 rounded">Delete</button>
               </div>
             </div>
-          ))
+          )})
         )}
       </div>
     </div>

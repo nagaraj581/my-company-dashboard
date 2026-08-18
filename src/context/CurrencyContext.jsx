@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useEffect, useState } from "react";
 
 const CurrencyContext = createContext();
 
@@ -34,4 +34,4 @@ export const CurrencyProvider = ({ children }) => {
   );
 };
 
-export const useCurrency = () => useContext(CurrencyContext);
+export { CurrencyContext };

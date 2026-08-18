@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { addDoc, getDocs, deleteDoc, updateDoc, onSnapshot, query, where } from "firebase/firestore";
 import { getCompanyInfo } from "../config/companyInfo";
 import { SkeletonLoader } from "../components/SkeletonLoader";
-import { useCurrency } from "../context/CurrencyContext";
+import { useCurrency } from "../context/useCurrency";
 import { getCurrentUserId, userCollection, userDoc } from "../services/userDb";
 
 const DEFAULT_UNITS = ["Nos"];

@@ -12,11 +12,15 @@ export async function getCompanyInfo() {
   const company = await getCompany(companyId);
   if (!company) return null;
 
-  // Build a unified UPI object from fields inside company doc
+  const selectedUpi = company.defaultUpiId
+    ? company.upis?.find((upi) => upi.id === company.defaultUpiId)
+    : null;
+
+  // Support both the current multi-UPI setup and older company-level UPI fields.
   const activeUpi = {
-    qrBase64: company.qrBase64 || null,
-    upiId: company.upiId || null,
-    name: company.upiName || company.name || "Merchant"
+    qrBase64: selectedUpi?.qrBase64 || company.qrBase64 || null,
+    upiId: selectedUpi?.upiId || company.upiId || null,
+    name: selectedUpi?.name || company.upiName || company.name || "Merchant",
   };
 
   cache = {
